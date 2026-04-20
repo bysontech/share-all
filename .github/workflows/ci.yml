@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  docs-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check markdown files exist
+        run: |
+          echo "Checking required docs..."
+          test -f README.md
+          test -f docs/promotion_criteria.md
+          test -f docs/migration_b_to_c.md
+          test -f docs/repository_contract.md
+          test -f docs/auth_contract.md
+          test -f docs/decision_log.md
+          echo "All required docs exist."
