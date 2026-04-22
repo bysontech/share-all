@@ -3,6 +3,8 @@ import type { Env } from '../types';
 import { uuid, nowSec, err } from '../utils';
 import { getRoomAndValidate } from '../db';
 
+type ParamRoomId = { roomId: string };
+
 const rooms = new Hono<{ Bindings: Env }>();
 
 rooms.post('/', async (c) => {
@@ -35,7 +37,7 @@ rooms.post('/', async (c) => {
 });
 
 rooms.get('/:roomId', async (c) => {
-  const { roomId } = c.req.param();
+  const { roomId } = c.req.param() as ParamRoomId;
   const result = await getRoomAndValidate(c.env.DB, roomId);
   if ('error' in result) return err(result.error, result.status);
   const { room } = result;
@@ -46,6 +48,29 @@ rooms.get('/:roomId', async (c) => {
     hasPasscode: !!room.passcode,
     description: room.description,
     expiresAt: room.expires_at,
+  });
+});
+
+rooms.get('/:roomId/slideshow-settings', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const result = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in result) return err(result.error, result.status);
+
+  type Row = { room_id: string; interval_seconds: number; show_nickname: number; order_mode: string; updated_at: number };
+  const settings = await c.env.DB.prepare(
+    'SELECT * FROM slideshow_settings WHERE room_id = ?'
+  )
+    .bind(roomId)
+    .first<Row>();
+
+  if (!settings) {
+    return c.json({ intervalSeconds: 5, showNickname: true, orderMode: 'asc' });
+  }
+
+  return c.json({
+    intervalSeconds: settings.interval_seconds,
+    showNickname: settings.show_nickname === 1,
+    orderMode: settings.order_mode,
   });
 });
 

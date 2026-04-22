@@ -33,6 +33,12 @@ export interface RoomInfo {
   expiresAt: number;
 }
 
+export interface SlideshowSettings {
+  intervalSeconds: number;
+  showNickname: boolean;
+  orderMode: string;
+}
+
 export interface UploadUrlResponse {
   uploadUrl: string;
   fileKey: string;
@@ -54,6 +60,11 @@ export interface PostsResponse {
   serverTime: number;
 }
 
+export interface ViewUrlsResponse {
+  viewUrls: Record<string, string>;
+  expiresAt: number;
+}
+
 export const api = {
   createRoom: (body: { name: string; passcode?: string; description?: string }) =>
     request<CreateRoomResponse>('/rooms', {
@@ -62,6 +73,9 @@ export const api = {
     }),
 
   getRoom: (roomId: string) => request<RoomInfo>(`/rooms/${roomId}`),
+
+  getSlideshowSettings: (roomId: string) =>
+    request<SlideshowSettings>(`/rooms/${roomId}/slideshow-settings`),
 
   getUploadUrl: (
     roomId: string,
@@ -73,13 +87,34 @@ export const api = {
     }),
 
   completeUpload: (roomId: string, postId: string) =>
-    request<{ ok: boolean }>(`/rooms/${roomId}/posts/${postId}/complete`, { method: 'POST', body: '{}' }),
+    request<{ ok: boolean }>(`/rooms/${roomId}/posts/${postId}/complete`, {
+      method: 'POST',
+      body: '{}',
+    }),
 
   failUpload: (roomId: string, postId: string) =>
-    request<{ ok: boolean }>(`/rooms/${roomId}/posts/${postId}/fail`, { method: 'POST', body: '{}' }),
+    request<{ ok: boolean }>(`/rooms/${roomId}/posts/${postId}/fail`, {
+      method: 'POST',
+      body: '{}',
+    }),
 
   getPosts: (roomId: string, since?: number) => {
-    const qs = since ? `?since=${since}` : '';
+    const qs = since != null ? `?since=${since}` : '';
     return request<PostsResponse>(`/rooms/${roomId}/posts${qs}`);
   },
+
+  getViewUrls: (roomId: string, postIds: string[]) =>
+    request<ViewUrlsResponse>(`/rooms/${roomId}/posts/view-urls`, {
+      method: 'POST',
+      body: JSON.stringify({ postIds }),
+    }),
 };
+
+export async function putToR2(uploadUrl: string, file: File): Promise<void> {
+  const res = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: file,
+    headers: { 'Content-Type': file.type },
+  });
+  if (!res.ok) throw new Error(`R2 PUT failed: ${res.status}`);
+}
