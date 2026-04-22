@@ -1,0 +1,20 @@
+name = "share-all-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "share-all-db"
+database_id = "local"
+
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "share-all-bucket"
+
+[vars]
+SIGNED_URL_EXPIRY_UPLOAD = "900"
+SIGNED_URL_EXPIRY_VIEW = "3600"
+FRONTEND_URL = "http://localhost:5173"
+
+[dev]
+port = 8787
