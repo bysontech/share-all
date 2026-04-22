@@ -29,3 +29,17 @@ export async function generatePresignedPutUrl(
   });
   return url;
 }
+
+export async function generatePresignedGetUrl(
+  bucket: R2Bucket,
+  fileKey: string,
+  expirySeconds: number
+): Promise<string> {
+  const b = bucket as R2WithPresign;
+  const create = b.createPresignedUrl;
+  if (typeof create !== 'function') {
+    throw new TypeError('R2Bucket.createPresignedUrl is not available');
+  }
+  const url = await create.call(b, 'GET', fileKey, { expiresIn: expirySeconds });
+  return url;
+}

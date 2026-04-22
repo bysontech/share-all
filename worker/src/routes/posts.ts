@@ -3,7 +3,7 @@ import type { Env } from '../types';
 import { ALLOWED_IMAGE_MIMES, MAX_IMAGE_SIZE } from '../types';
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
 import { getRoomAndValidate, getPost } from '../db';
-import { generatePresignedPutUrl, r2SupportsPresignedPut } from '../r2';
+import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
 import { createUploadBodyToken, verifyUploadBodyToken } from '../uploadBodyToken';
 
 type ParamRoomId = { roomId: string };
@@ -206,6 +206,51 @@ posts.get('/', async (c) => {
 
   const serverTime = nowSec();
   return c.json({ posts: results, serverTime });
+});
+
+posts.post('/view-urls', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const roomResult = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in roomResult) return err(roomResult.error, roomResult.status);
+
+  const body = await c.req.json<{ postIds?: string[] }>();
+  if (!Array.isArray(body.postIds) || body.postIds.length === 0) {
+    return err('postIds must be a non-empty array');
+  }
+  if (body.postIds.length > 50) {
+    return err('postIds too many (max 50)');
+  }
+
+  if (!r2SupportsPresignedPut(c.env.STORAGE)) {
+    return err('Presigned GET URLs not available in this environment', 501);
+  }
+
+  const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
+
+  type Row = { id: string; file_key: string };
+  const placeholders = body.postIds.map(() => '?').join(',');
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, file_key FROM posts
+     WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'
+     AND id IN (${placeholders})`
+  )
+    .bind(roomId, ...body.postIds)
+    .all<Row>();
+
+  const viewUrls: Record<string, string> = {};
+  await Promise.all(
+    results.map(async (row) => {
+      try {
+        const url = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
+        viewUrls[row.id] = url;
+      } catch (_e) {
+        // skip: URL generation failure for one post should not fail the whole request
+      }
+    })
+  );
+
+  const expiresAt = nowSec() + expirySeconds;
+  return c.json({ viewUrls, expiresAt });
 });
 
 export default posts;
