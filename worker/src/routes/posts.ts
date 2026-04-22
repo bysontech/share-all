@@ -3,7 +3,8 @@ import type { Env } from '../types';
 import { ALLOWED_IMAGE_MIMES, MAX_IMAGE_SIZE } from '../types';
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
 import { getRoomAndValidate, getPost } from '../db';
-import { generatePresignedPutUrl } from '../r2';
+import { generatePresignedPutUrl, r2SupportsPresignedPut } from '../r2';
+import { createUploadBodyToken, verifyUploadBodyToken } from '../uploadBodyToken';
 
 type ParamRoomId = { roomId: string };
 type ParamPost = { roomId: string; postId: string };
@@ -49,14 +50,86 @@ posts.post('/upload-url', async (c) => {
     .run();
 
   let uploadUrl: string;
-  try {
-    uploadUrl = await generatePresignedPutUrl(c.env.STORAGE, fileKey, body.mimeType, expirySeconds);
-  } catch (_e) {
-    await c.env.DB.prepare("UPDATE posts SET upload_status = 'failed' WHERE id = ?").bind(postId).run();
-    return err('Failed to generate upload URL', 500);
+  if (r2SupportsPresignedPut(c.env.STORAGE)) {
+    try {
+      uploadUrl = await generatePresignedPutUrl(c.env.STORAGE, fileKey, body.mimeType, expirySeconds);
+    } catch (e) {
+      console.error('Failed to generate presigned upload URL', {
+        roomId,
+        postId,
+        fileKey,
+        mimeType: body.mimeType,
+        expirySeconds,
+        error: e,
+      });
+      await c.env.DB.prepare("UPDATE posts SET upload_status = 'failed' WHERE id = ?").bind(postId).run();
+      return err('Failed to generate upload URL', 500);
+    }
+  } else {
+    const secret = c.env.UPLOAD_BODY_SIGNING_SECRET;
+    if (!secret) {
+      await c.env.DB.prepare("UPDATE posts SET upload_status = 'failed' WHERE id = ?").bind(postId).run();
+      return err('UPLOAD_BODY_SIGNING_SECRET is required for local upload proxy', 500);
+    }
+    const exp = now + expirySeconds;
+    const token = await createUploadBodyToken(secret, {
+      postId,
+      roomId,
+      fileKey,
+      mimeType: body.mimeType,
+      exp,
+    });
+    uploadUrl = `/api/rooms/${roomId}/posts/${postId}/upload-body?token=${encodeURIComponent(token)}`;
   }
 
   return c.json({ uploadUrl, fileKey, postId }, 201);
+});
+
+posts.put('/:postId/upload-body', async (c) => {
+  const { roomId, postId } = c.req.param() as ParamPost;
+  const token = c.req.query('token');
+  if (!token) return err('token is required', 400);
+
+  const secret = c.env.UPLOAD_BODY_SIGNING_SECRET;
+  if (!secret) return err('Upload proxy not configured', 501);
+
+  const payload = await verifyUploadBodyToken(secret, token);
+  if (!payload || payload.postId !== postId || payload.roomId !== roomId) {
+    return err('Invalid or expired token', 403);
+  }
+
+  const roomResult = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in roomResult) return err(roomResult.error, roomResult.status);
+
+  const post = await getPost(c.env.DB, postId);
+  if (!post) return err('Post not found', 404);
+  if (post.room_id !== roomId) return err('Post not found', 404);
+  if (post.upload_status !== 'pending') return err('Post is not pending', 409);
+  if (post.file_key !== payload.fileKey || post.mime_type !== payload.mimeType) {
+    return err('Token does not match post', 403);
+  }
+
+  const contentLength = c.req.header('Content-Length');
+  if (contentLength) {
+    const n = parseInt(contentLength, 10);
+    if (!Number.isFinite(n) || n > MAX_IMAGE_SIZE) {
+      return err('File too large (max 20MB)', 413);
+    }
+  }
+
+  const body = c.req.raw.body;
+  if (!body) return err('Body is required', 400);
+
+  try {
+    await c.env.STORAGE.put(payload.fileKey, body, {
+      httpMetadata: { contentType: payload.mimeType },
+    });
+  } catch (e) {
+    console.error('R2 put failed (upload-body proxy)', { fileKey: payload.fileKey, error: e });
+    return err('Storage upload failed', 500);
+  }
+
+  return new Response(null, { status: 204 });
 });
 
 posts.post('/:postId/complete', async (c) => {

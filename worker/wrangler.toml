@@ -15,6 +15,7 @@ bucket_name = "share-all-bucket"
 SIGNED_URL_EXPIRY_UPLOAD = "900"
 SIGNED_URL_EXPIRY_VIEW = "3600"
 FRONTEND_URL = "http://localhost:5173"
+UPLOAD_BODY_SIGNING_SECRET = "local-dev-only-change-in-production"
 
 [dev]
 port = 8787

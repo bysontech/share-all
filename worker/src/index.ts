@@ -13,7 +13,7 @@ app.use('*', cors({
     if (origin === allowed || origin.endsWith('.pages.dev')) return origin;
     return null;
   },
-  allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'X-Host-Token', 'X-Room-Passcode'],
 }));
 

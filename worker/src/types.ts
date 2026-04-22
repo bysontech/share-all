@@ -4,6 +4,8 @@ export interface Env {
   FRONTEND_URL: string;
   SIGNED_URL_EXPIRY_UPLOAD: string;
   SIGNED_URL_EXPIRY_VIEW: string;
+  /** HMAC secret for Worker PUT proxy when local Miniflare R2 has no createPresignedUrl */
+  UPLOAD_BODY_SIGNING_SECRET?: string;
   R2_ACCOUNT_ID?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
