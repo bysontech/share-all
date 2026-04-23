@@ -26,7 +26,13 @@ export default function SlideshowPage() {
   });
 
   const { posts, error: pollError } = usePostsPolling(roomId);
-  const imagePosts = posts.filter((p) => p.file_type === 'image');
+  const imagePosts = posts
+    .filter((p) => p.file_type === 'image')
+    .sort((a, b) =>
+      settings.orderMode === 'desc'
+        ? b.created_at - a.created_at
+        : a.created_at - b.created_at
+    );
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [viewUrlCache, setViewUrlCache] = useState<ViewUrlCache>({ urls: {}, expiresAt: 0 });

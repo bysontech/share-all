@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { ALLOWED_IMAGE_MIMES, MAX_IMAGE_SIZE } from '../types';
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
-import { getRoomAndValidate, getPost } from '../db';
+import { getRoomAndValidate, getPost, validateHostToken } from '../db';
 import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
 import {
   createUploadBodyToken,
@@ -270,6 +270,90 @@ posts.post('/view-urls', async (c) => {
 
   const expiresAt = exp;
   return c.json({ viewUrls, expiresAt });
+});
+
+// ---- Admin endpoints (X-Host-Token required) ----
+
+posts.get('/admin', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const roomResult = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in roomResult) return err(roomResult.error, roomResult.status);
+  const { room } = roomResult;
+
+  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+    return err('Unauthorized', 401);
+  }
+
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '100', 10), 200);
+  type AdminRow = {
+    id: string; nickname: string; file_type: string; file_key: string;
+    mime_type: string; file_size: number; status: string; upload_status: string;
+    created_at: number; uploaded_at: number | null; sort_order: number | null;
+  };
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, nickname, file_type, file_key, mime_type, file_size, status, upload_status, created_at, uploaded_at, sort_order
+     FROM posts
+     WHERE room_id = ? AND upload_status = 'uploaded'
+     ORDER BY created_at DESC
+     LIMIT ?`
+  )
+    .bind(roomId, limit)
+    .all<AdminRow>();
+
+  return c.json({ posts: results });
+});
+
+posts.patch('/:postId', async (c) => {
+  const { roomId, postId } = c.req.param() as ParamPost;
+  const roomResult = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in roomResult) return err(roomResult.error, roomResult.status);
+  const { room } = roomResult;
+
+  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+    return err('Unauthorized', 401);
+  }
+
+  const body = await c.req.json<{ status?: string }>();
+  if (!body.status || !['visible', 'hidden'].includes(body.status)) {
+    return err('status must be visible or hidden');
+  }
+
+  const post = await getPost(c.env.DB, postId);
+  if (!post) return err('Post not found', 404);
+  if (post.room_id !== roomId) return err('Post not found', 404);
+
+  await c.env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?')
+    .bind(body.status, postId)
+    .run();
+
+  return c.json({ id: postId, status: body.status });
+});
+
+posts.delete('/:postId', async (c) => {
+  const { roomId, postId } = c.req.param() as ParamPost;
+  const roomResult = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in roomResult) return err(roomResult.error, roomResult.status);
+  const { room } = roomResult;
+
+  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+    return err('Unauthorized', 401);
+  }
+
+  const post = await getPost(c.env.DB, postId);
+  if (!post) return err('Post not found', 404);
+  if (post.room_id !== roomId) return err('Post not found', 404);
+
+  try {
+    await c.env.STORAGE.delete(post.file_key);
+  } catch (e) {
+    console.error('R2 delete failed', { fileKey: post.file_key, error: e });
+    return err('Failed to delete file from storage', 500);
+  }
+
+  await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
+
+  return c.json({ ok: true });
 });
 
 posts.get('/:postId/view-file', async (c) => {

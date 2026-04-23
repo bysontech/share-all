@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { uuid, nowSec, err } from '../utils';
-import { getRoomAndValidate } from '../db';
+import { getRoomAndValidate, validateHostToken } from '../db';
 
 type ParamRoomId = { roomId: string };
 
@@ -72,6 +72,49 @@ rooms.get('/:roomId/slideshow-settings', async (c) => {
     showNickname: settings.show_nickname === 1,
     orderMode: settings.order_mode,
   });
+});
+
+rooms.put('/:roomId/slideshow-settings', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const result = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in result) return err(result.error, result.status);
+  const { room } = result;
+
+  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+    return err('Unauthorized', 401);
+  }
+
+  const body = await c.req.json<{
+    intervalSeconds?: number;
+    showNickname?: boolean;
+    orderMode?: string;
+  }>();
+
+  const intervalSeconds = body.intervalSeconds ?? 5;
+  const showNickname = body.showNickname ?? true;
+  const orderMode = body.orderMode ?? 'asc';
+
+  if (typeof intervalSeconds !== 'number' || intervalSeconds < 1 || intervalSeconds > 60) {
+    return err('intervalSeconds must be between 1 and 60');
+  }
+  if (!['asc', 'desc'].includes(orderMode)) {
+    return err('orderMode must be asc or desc');
+  }
+
+  const now = nowSec();
+  await c.env.DB.prepare(
+    `INSERT INTO slideshow_settings (room_id, interval_seconds, show_nickname, order_mode, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(room_id) DO UPDATE SET
+       interval_seconds = excluded.interval_seconds,
+       show_nickname = excluded.show_nickname,
+       order_mode = excluded.order_mode,
+       updated_at = excluded.updated_at`
+  )
+    .bind(roomId, intervalSeconds, showNickname ? 1 : 0, orderMode, now)
+    .run();
+
+  return c.json({ intervalSeconds, showNickname, orderMode });
 });
 
 export default rooms;
