@@ -4,7 +4,12 @@ import { ALLOWED_IMAGE_MIMES, MAX_IMAGE_SIZE } from '../types';
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
 import { getRoomAndValidate, getPost } from '../db';
 import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
-import { createUploadBodyToken, verifyUploadBodyToken } from '../uploadBodyToken';
+import {
+  createUploadBodyToken,
+  verifyUploadBodyToken,
+  createViewFileToken,
+  verifyViewFileToken,
+} from '../uploadBodyToken';
 
 type ParamRoomId = { roomId: string };
 type ParamPost = { roomId: string; postId: string };
@@ -221,11 +226,13 @@ posts.post('/view-urls', async (c) => {
     return err('postIds too many (max 50)');
   }
 
-  if (!r2SupportsPresignedPut(c.env.STORAGE)) {
-    return err('Presigned GET URLs not available in this environment', 501);
-  }
-
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
+  const usePresigned = r2SupportsPresignedPut(c.env.STORAGE);
+  const proxySecret = c.env.UPLOAD_BODY_SIGNING_SECRET;
+
+  if (!usePresigned && !proxySecret) {
+    return err('UPLOAD_BODY_SIGNING_SECRET is required for local view URL proxy', 501);
+  }
 
   type Row = { id: string; file_key: string };
   const placeholders = body.postIds.map(() => '?').join(',');
@@ -238,19 +245,69 @@ posts.post('/view-urls', async (c) => {
     .all<Row>();
 
   const viewUrls: Record<string, string> = {};
+  const exp = nowSec() + expirySeconds;
   await Promise.all(
     results.map(async (row) => {
       try {
-        const url = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
-        viewUrls[row.id] = url;
+        if (usePresigned) {
+          const url = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
+          viewUrls[row.id] = url;
+        } else {
+          const token = await createViewFileToken(proxySecret!, {
+            postId: row.id,
+            roomId,
+            fileKey: row.file_key,
+            exp,
+          });
+          viewUrls[row.id] =
+            `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+        }
       } catch (_e) {
         // skip: URL generation failure for one post should not fail the whole request
       }
     })
   );
 
-  const expiresAt = nowSec() + expirySeconds;
+  const expiresAt = exp;
   return c.json({ viewUrls, expiresAt });
+});
+
+posts.get('/:postId/view-file', async (c) => {
+  const { roomId, postId } = c.req.param() as ParamPost;
+  const token = c.req.query('token');
+  if (!token) return err('token is required', 400);
+
+  const secret = c.env.UPLOAD_BODY_SIGNING_SECRET;
+  if (!secret) return err('View proxy not configured', 501);
+
+  const payload = await verifyViewFileToken(secret, token);
+  if (!payload || payload.postId !== postId || payload.roomId !== roomId) {
+    return err('Invalid or expired token', 403);
+  }
+
+  const roomResult = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in roomResult) return err(roomResult.error, roomResult.status);
+
+  const post = await getPost(c.env.DB, postId);
+  if (!post) return err('Post not found', 404);
+  if (post.room_id !== roomId) return err('Post not found', 404);
+  if (post.upload_status !== 'uploaded' || post.status !== 'visible') {
+    return err('Post not found', 404);
+  }
+  if (post.file_key !== payload.fileKey) {
+    return err('Token does not match post', 403);
+  }
+
+  const obj = await c.env.STORAGE.get(payload.fileKey);
+  if (!obj) return err('Object not found', 404);
+
+  const contentType = obj.httpMetadata?.contentType ?? post.mime_type;
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': contentType,
+      'Cache-Control': 'private, max-age=60',
+    },
+  });
 });
 
 export default posts;

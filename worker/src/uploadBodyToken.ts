@@ -92,3 +92,62 @@ export async function verifyUploadBodyToken(
   if (data.exp < nowSec()) return null;
   return data;
 }
+
+export type ViewFileTokenPayload = {
+  k: 'view-file';
+  postId: string;
+  roomId: string;
+  fileKey: string;
+  exp: number;
+};
+
+export async function createViewFileToken(
+  secret: string,
+  data: Omit<ViewFileTokenPayload, 'k'>
+): Promise<string> {
+  const full: ViewFileTokenPayload = { k: 'view-file', ...data };
+  const payload = JSON.stringify(full);
+  const sig = await hmacSha256(secret, payload);
+  return `${bytesToB64url(new TextEncoder().encode(payload))}.${bytesToB64url(sig)}`;
+}
+
+export async function verifyViewFileToken(
+  secret: string,
+  token: string
+): Promise<ViewFileTokenPayload | null> {
+  const dot = token.indexOf('.');
+  if (dot === -1) return null;
+  const payloadB64 = token.slice(0, dot);
+  const sigB64 = token.slice(dot + 1);
+  let payload: string;
+  try {
+    payload = new TextDecoder().decode(b64urlToBytes(payloadB64));
+  } catch {
+    return null;
+  }
+  const expectedSig = await hmacSha256(secret, payload);
+  let actualSig: Uint8Array;
+  try {
+    actualSig = b64urlToBytes(sigB64);
+  } catch {
+    return null;
+  }
+  if (!timingSafeEqual(expectedSig, actualSig)) return null;
+  let data: ViewFileTokenPayload;
+  try {
+    data = JSON.parse(payload) as ViewFileTokenPayload;
+  } catch {
+    return null;
+  }
+  if (data.k !== 'view-file') return null;
+  if (
+    typeof data.postId !== 'string' ||
+    typeof data.roomId !== 'string' ||
+    typeof data.fileKey !== 'string' ||
+    typeof data.exp !== 'number'
+  ) {
+    return null;
+  }
+  if (data.exp < nowSec()) return null;
+  return data;
+}

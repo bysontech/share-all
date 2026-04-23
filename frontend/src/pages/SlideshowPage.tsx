@@ -5,6 +5,11 @@ import { usePostsPolling } from '../hooks/usePostsPolling';
 
 const VIEW_URL_REFRESH_BEFORE_EXPIRY = 120; // 有効期限の2分前に再取得
 
+/** HEIC/HEIF は環境によって img 表示が失敗しやすい */
+function isHeicMime(mime: string | undefined): boolean {
+  return mime === 'image/heic' || mime === 'image/heif';
+}
+
 interface ViewUrlCache {
   urls: Record<string, string>;
   expiresAt: number;
@@ -26,6 +31,7 @@ export default function SlideshowPage() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [viewUrlCache, setViewUrlCache] = useState<ViewUrlCache>({ urls: {}, expiresAt: 0 });
   const [urlLoading, setUrlLoading] = useState(false);
+  const [imageLoadError, setImageLoadError] = useState(false);
   const viewUrlCacheRef = useRef(viewUrlCache);
   viewUrlCacheRef.current = viewUrlCache;
 
@@ -95,6 +101,10 @@ export default function SlideshowPage() {
 
   const currentPost = imagePosts[currentIndex];
   const currentUrl = currentPost ? viewUrlCache.urls[currentPost.id] : undefined;
+
+  useEffect(() => {
+    setImageLoadError(false);
+  }, [currentPost?.id, currentUrl]);
 
   if (roomError) {
     return (
@@ -176,17 +186,41 @@ export default function SlideshowPage() {
             <p style={{ fontSize: 14 }}>写真が投稿されるとここに表示されます</p>
           </div>
         ) : currentUrl ? (
-          <img
-            key={currentPost?.id}
-            src={currentUrl}
-            alt={currentPost?.nickname}
-            style={{
-              maxWidth: '100%',
-              maxHeight: 'calc(100vh - 120px)',
-              objectFit: 'contain',
-              borderRadius: 4,
-            }}
-          />
+          imageLoadError ? (
+            <div style={{ textAlign: 'center', color: '#aaa', maxWidth: 420, padding: 16, lineHeight: 1.6 }}>
+              {isHeicMime(currentPost?.mime_type) ? (
+                <>
+                  <p style={{ fontSize: 16, marginBottom: 8, color: '#c88' }}>
+                    HEIC / HEIF の表示に失敗しました
+                  </p>
+                  <p style={{ fontSize: 13, color: '#777' }}>
+                    iPhone の「設定 → カメラ → フォーマット」で互換性優先（JPEG）にするか、JPEG / PNG
+                    での投稿を試してください。
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p style={{ fontSize: 15, color: '#c88' }}>画像の表示に失敗しました</p>
+                  <p style={{ fontSize: 13, color: '#888', marginTop: 8 }}>
+                    ネットワークや形式を確認し、ページを再読み込みしてください。
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
+            <img
+              key={`${currentPost?.id}-${currentUrl}`}
+              src={currentUrl}
+              alt={currentPost?.nickname}
+              onError={() => setImageLoadError(true)}
+              style={{
+                maxWidth: '100%',
+                maxHeight: 'calc(100vh - 120px)',
+                objectFit: 'contain',
+                borderRadius: 4,
+              }}
+            />
+          )
         ) : (
           <div style={{ color: '#555', fontSize: 14 }}>
             {urlLoading ? '読み込み中...' : '画像を準備中です'}
