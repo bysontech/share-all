@@ -55,6 +55,20 @@ export interface Post {
   sort_order: number | null;
 }
 
+export interface AdminPost {
+  id: string;
+  nickname: string;
+  file_type: string;
+  file_key: string;
+  mime_type: string;
+  file_size: number;
+  status: string;
+  upload_status: string;
+  created_at: number;
+  uploaded_at: number | null;
+  sort_order: number | null;
+}
+
 export interface PostsResponse {
   posts: Post[];
   serverTime: number;
@@ -76,6 +90,13 @@ export const api = {
 
   getSlideshowSettings: (roomId: string) =>
     request<SlideshowSettings>(`/rooms/${roomId}/slideshow-settings`),
+
+  updateSlideshowSettings: (roomId: string, hostToken: string, settings: SlideshowSettings) =>
+    request<SlideshowSettings>(`/rooms/${roomId}/slideshow-settings`, {
+      method: 'PUT',
+      headers: { 'X-Host-Token': hostToken },
+      body: JSON.stringify(settings),
+    }),
 
   getUploadUrl: (
     roomId: string,
@@ -107,6 +128,25 @@ export const api = {
     request<ViewUrlsResponse>(`/rooms/${roomId}/posts/view-urls`, {
       method: 'POST',
       body: JSON.stringify({ postIds }),
+    }),
+
+  // Admin APIs
+  getAdminPosts: (roomId: string, hostToken: string) =>
+    request<{ posts: AdminPost[] }>(`/rooms/${roomId}/posts/admin`, {
+      headers: { 'X-Host-Token': hostToken },
+    }),
+
+  updatePostStatus: (roomId: string, postId: string, hostToken: string, status: 'visible' | 'hidden') =>
+    request<{ id: string; status: string }>(`/rooms/${roomId}/posts/${postId}`, {
+      method: 'PATCH',
+      headers: { 'X-Host-Token': hostToken },
+      body: JSON.stringify({ status }),
+    }),
+
+  deletePost: (roomId: string, postId: string, hostToken: string) =>
+    request<{ ok: boolean }>(`/rooms/${roomId}/posts/${postId}`, {
+      method: 'DELETE',
+      headers: { 'X-Host-Token': hostToken },
     }),
 };
 

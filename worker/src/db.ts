@@ -27,3 +27,8 @@ export async function getPost(db: D1Database, postId: string): Promise<Post | nu
     .first<Post>();
   return result ?? null;
 }
+
+export function validateHostToken(room: Room, token: string | null | undefined): boolean {
+  if (!token) return false;
+  return room.host_token === token;
+}
