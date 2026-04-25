@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import type { Env } from './types';
 import rooms from './routes/rooms';
 import posts from './routes/posts';
+import theme from './routes/theme';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -19,6 +20,7 @@ app.use('*', cors({
 
 app.route('/api/rooms', rooms);
 app.route('/api/rooms/:roomId/posts', posts);
+app.route('/api/rooms/:roomId/theme', theme);
 
 app.get('/health', (c) => c.json({ ok: true }));
 
