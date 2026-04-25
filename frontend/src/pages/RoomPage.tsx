@@ -1,23 +1,58 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, ApiError, type RoomInfo } from '../api/client';
+import { api, ApiError, type RoomInfo, type ThemeSettings } from '../api/client';
 import { useUploadQueue } from '../hooks/useUploadQueue';
 import { usePostsPolling } from '../hooks/usePostsPolling';
 import type { QueueItem } from '../hooks/useUploadQueue';
 
-const STATUS_LABEL: Record<QueueItem['status'], string> = {
-  pending: '待機中',
-  uploading: 'アップロード中',
-  completing: '登録中',
-  done: '完了',
-  error: 'エラー',
+const EMPTY_THEME: ThemeSettings = {
+  title: null, message: null, mainVisualKey: null,
+  backgroundImageKey: null, themeColor: null, animationMode: 'none',
 };
+
+const STATUS_LABEL: Record<QueueItem['status'], string> = {
+  pending: '待機中', uploading: 'アップロード中',
+  completing: '登録中', done: '完了', error: 'エラー',
+};
+
+function useTheme(roomId: string | undefined) {
+  const [theme, setTheme] = useState<ThemeSettings>(EMPTY_THEME);
+  const [viewUrls, setViewUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!roomId) return;
+    api.getTheme(roomId).then(t => {
+      setTheme(t);
+      if (t.mainVisualKey || t.backgroundImageKey) {
+        api.getThemeViewUrls(roomId).then(r => setViewUrls(r.viewUrls)).catch(() => {});
+      }
+    }).catch(() => {});
+  }, [roomId]);
+
+  return { theme, viewUrls };
+}
+
+// Inline keyframe injection (once)
+let injected = false;
+function injectKeyframes() {
+  if (injected || typeof document === 'undefined') return;
+  injected = true;
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes floatY { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+    @keyframes roomFadeIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+  `;
+  document.head.appendChild(style);
+}
 
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
+  injectKeyframes();
 
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [roomError, setRoomError] = useState('');
+  const { theme, viewUrls } = useTheme(roomId);
 
   const nicknameKey = `nickname:${roomId}`;
   const [nickname, setNickname] = useState(() => localStorage.getItem(nicknameKey) ?? '');
@@ -37,13 +72,12 @@ export default function RoomPage() {
 
   useEffect(() => {
     if (!roomId) return;
-    api
-      .getRoom(roomId)
-      .then((r) => {
+    api.getRoom(roomId)
+      .then(r => {
         setRoom(r);
         if (!r.hasPasscode) setPasscodeVerified(true);
       })
-      .catch((e) => setRoomError(e instanceof ApiError ? e.message : 'ルーム情報の取得に失敗しました'));
+      .catch(e => setRoomError(e instanceof ApiError ? e.message : 'ルーム情報の取得に失敗しました'));
   }, [roomId]);
 
   function handleNicknameSubmit() {
@@ -54,225 +88,240 @@ export default function RoomPage() {
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(e.target.files ?? []).filter((f) =>
+    const selected = Array.from(e.target.files ?? []).filter(f =>
       ['image/jpeg', 'image/png', 'image/webp', 'image/heic'].includes(f.type)
     );
-    if (selected.length > 0) addFiles(selected);
+    if (selected.length) addFiles(selected);
     e.target.value = '';
   }
 
+  const accentColor = theme.themeColor ?? '#b8860b';
+  const bgUrl = viewUrls['background'];
+  const mainVisualUrl = viewUrls['mainVisual'];
+
+  const outerStyle: React.CSSProperties = {
+    minHeight: '100vh',
+    position: 'relative',
+    fontFamily: 'Georgia, "Noto Serif JP", serif',
+  };
+
+  // Background layer
+  const bgLayerStyle: React.CSSProperties = {
+    position: 'fixed', inset: 0, zIndex: 0,
+    backgroundImage: bgUrl ? `url(${bgUrl})` : 'linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)',
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+  };
+
+  const overlayStyle: React.CSSProperties = {
+    position: 'fixed', inset: 0, zIndex: 1,
+    background: bgUrl ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.05)',
+  };
+
+  const contentStyle: React.CSSProperties = {
+    position: 'relative', zIndex: 2,
+    maxWidth: 560,
+    margin: '0 auto',
+    padding: '0 16px 40px',
+    color: bgUrl ? '#fff' : '#333',
+  };
+
+  const cardStyle: React.CSSProperties = {
+    background: bgUrl ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.85)',
+    backdropFilter: 'blur(6px)',
+    border: `1px solid ${bgUrl ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.08)'}`,
+    borderRadius: 10,
+    padding: 20,
+    marginBottom: 20,
+    color: bgUrl ? '#fff' : '#333',
+    animation: theme.animationMode === 'fade' ? 'roomFadeIn 0.5s ease' : undefined,
+  };
+
+  const primaryBtnStyle: React.CSSProperties = {
+    display: 'inline-block',
+    padding: '10px 22px',
+    background: accentColor,
+    color: '#fff',
+    border: 'none',
+    borderRadius: 6,
+    cursor: 'pointer',
+    fontSize: 14,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  };
+
+  const textColor = bgUrl ? 'rgba(255,255,255,0.8)' : '#666';
+
+  // ---- Error ----
   if (roomError) {
     return (
-      <div style={{ maxWidth: 480, margin: '40px auto', padding: '0 16px' }}>
-        <p style={{ color: 'red' }}>{roomError}</p>
+      <div style={{ ...outerStyle, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={bgLayerStyle} /><div style={overlayStyle} />
+        <p style={{ position: 'relative', zIndex: 2, color: '#c00' }}>{roomError}</p>
       </div>
     );
   }
+  if (!room) return <div style={{ padding: 40, textAlign: 'center' }}>読み込み中...</div>;
 
-  if (!room) return <div style={{ padding: 24 }}>読み込み中...</div>;
-
+  // ---- Passcode gate ----
   if (room.hasPasscode && !passcodeVerified) {
     return (
-      <div style={{ maxWidth: 480, margin: '40px auto', padding: '0 16px' }}>
-        <h2>{room.name}</h2>
-        <p>パスコードを入力してください</p>
-        <input
-          type="text"
-          value={passcodeInput}
-          onChange={(e) => setPasscodeInput(e.target.value)}
-          placeholder="パスコード"
-          style={{ padding: '8px', width: '100%', boxSizing: 'border-box', marginBottom: 8 }}
-        />
-        <button onClick={() => setPasscodeVerified(true)} style={{ padding: '8px 16px', cursor: 'pointer' }}>
-          入室する
-        </button>
-        <p style={{ fontSize: 12, color: '#888' }}>
-          ※ パスコードは投稿時に検証されます
-        </p>
+      <div style={outerStyle}>
+        <div style={bgLayerStyle} /><div style={overlayStyle} />
+        <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+          <div style={{ ...cardStyle, width: '100%', maxWidth: 360 }}>
+            <h2 style={{ margin: '0 0 16px', textAlign: 'center', color: accentColor }}>{room.name}</h2>
+            <p style={{ margin: '0 0 12px', fontSize: 14 }}>パスコードを入力してください</p>
+            <input
+              type="text" value={passcodeInput}
+              onChange={e => setPasscodeInput(e.target.value)}
+              placeholder="パスコード"
+              style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginBottom: 12, borderRadius: 6, border: '1px solid #ccc' }}
+            />
+            <button onClick={() => setPasscodeVerified(true)} style={{ ...primaryBtnStyle, width: '100%' }}>
+              入室する
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
 
+  // ---- Nickname gate ----
   if (!nickname) {
     return (
-      <div style={{ maxWidth: 480, margin: '40px auto', padding: '0 16px' }}>
-        <h2>{room.name}</h2>
-        <p>ニックネームを入力してください</p>
-        <input
-          type="text"
-          value={nicknameInput}
-          onChange={(e) => setNicknameInput(e.target.value)}
-          placeholder="例: 太郎"
-          style={{ padding: '8px', width: '100%', boxSizing: 'border-box', marginBottom: 8 }}
-          onKeyDown={(e) => e.key === 'Enter' && handleNicknameSubmit()}
-        />
-        <button onClick={handleNicknameSubmit} style={{ padding: '8px 16px', cursor: 'pointer' }}>
-          参加する
-        </button>
+      <div style={outerStyle}>
+        <div style={bgLayerStyle} /><div style={overlayStyle} />
+        <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+          <div style={{ ...cardStyle, width: '100%', maxWidth: 360, textAlign: 'center' }}>
+            {mainVisualUrl && (
+              <img src={mainVisualUrl} alt="main visual"
+                style={{
+                  width: 120, height: 120, objectFit: 'cover', borderRadius: '50%',
+                  border: `3px solid ${accentColor}`, marginBottom: 16,
+                  animation: theme.animationMode === 'float' ? 'floatY 3s ease-in-out infinite' : undefined,
+                }}
+              />
+            )}
+            <h2 style={{ margin: '0 0 4px', color: accentColor, fontSize: 22 }}>
+              {theme.title ?? room.name}
+            </h2>
+            {theme.message && (
+              <p style={{ fontSize: 13, color: textColor, margin: '0 0 20px', lineHeight: 1.7 }}>{theme.message}</p>
+            )}
+            <p style={{ margin: '0 0 10px', fontSize: 14 }}>お名前（ニックネーム）</p>
+            <input
+              type="text" value={nicknameInput}
+              onChange={e => setNicknameInput(e.target.value)}
+              placeholder="例: 太郎"
+              onKeyDown={e => e.key === 'Enter' && handleNicknameSubmit()}
+              style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginBottom: 12, borderRadius: 6, border: '1px solid #ccc', textAlign: 'center', fontSize: 16 }}
+            />
+            <button onClick={handleNicknameSubmit} style={{ ...primaryBtnStyle, width: '100%' }}>
+              参加する
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
 
+  // ---- Main room view ----
   return (
-    <div style={{ maxWidth: 600, margin: '40px auto', padding: '0 16px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-        <h2 style={{ margin: 0 }}>{room.name}</h2>
-        <Link
-          to={`/room/${roomId}/slideshow`}
-          style={{
-            padding: '6px 14px',
-            background: '#1a1a1a',
-            color: '#fff',
-            borderRadius: 4,
-            textDecoration: 'none',
-            fontSize: 14,
-          }}
-        >
-          スライドショー
-        </Link>
-      </div>
-      <p style={{ color: '#555', margin: '0 0 20px' }}>
-        参加中: <strong>{nickname}</strong>
-      </p>
+    <div style={outerStyle}>
+      <div style={bgLayerStyle} />
+      <div style={overlayStyle} />
+      <div style={contentStyle}>
+        {/* Header */}
+        <div style={{ paddingTop: 32, paddingBottom: 20, textAlign: 'center' }}>
+          {mainVisualUrl && (
+            <img src={mainVisualUrl} alt="main visual"
+              style={{
+                width: 80, height: 80, objectFit: 'cover', borderRadius: '50%',
+                border: `3px solid ${accentColor}`, marginBottom: 12,
+                animation: theme.animationMode === 'float' ? 'floatY 3s ease-in-out infinite' : undefined,
+              }}
+            />
+          )}
+          <h1 style={{ margin: '0 0 4px', fontSize: 22, color: accentColor, fontWeight: 'normal' }}>
+            {theme.title ?? room.name}
+          </h1>
+          {theme.message && (
+            <p style={{ margin: '0 0 4px', fontSize: 13, color: textColor, lineHeight: 1.7 }}>{theme.message}</p>
+          )}
+          <p style={{ margin: 0, fontSize: 12, color: textColor }}>
+            参加中: <strong style={{ color: accentColor }}>{nickname}</strong>
+          </p>
+        </div>
 
-      {/* Upload area */}
-      <div style={{ border: '1px solid #ccc', borderRadius: 4, padding: 16, marginBottom: 24 }}>
-        <h3 style={{ margin: '0 0 12px' }}>画像をアップロード</h3>
-        <label
-          style={{
-            display: 'inline-block',
-            padding: '8px 16px',
-            background: '#0066cc',
-            color: '#fff',
-            borderRadius: 4,
-            cursor: 'pointer',
-            marginBottom: 12,
-          }}
-        >
-          画像を選択
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/heic"
-            multiple
-            onChange={handleFileChange}
-            style={{ display: 'none' }}
-          />
-        </label>
-
-        {/* Summary */}
-        {summary.total > 0 && (
-          <div style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
-            全{summary.total}件 | 処理中: {summary.active} | 完了: {summary.done} | エラー: {summary.error}
-            {summary.done > 0 && (
-              <button
-                onClick={clearDone}
-                style={{ marginLeft: 8, fontSize: 12, cursor: 'pointer', padding: '2px 8px' }}
-              >
-                完了を消す
-              </button>
-            )}
+        {/* Upload card */}
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>写真をシェア</h3>
+            <Link to={`/room/${roomId}/slideshow`}
+              style={{ fontSize: 12, padding: '5px 12px', background: accentColor, color: '#fff', borderRadius: 20, textDecoration: 'none' }}>
+              スライドショー
+            </Link>
           </div>
-        )}
+          <label style={{ ...primaryBtnStyle, background: accentColor, display: 'inline-block', marginBottom: 12 }}>
+            写真を選択
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/heic" multiple
+              onChange={handleFileChange} style={{ display: 'none' }} />
+          </label>
 
-        {/* Queue list */}
-        {items.length > 0 && (
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {items.map((item) => (
-              <li
-                key={item.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '6px 0',
-                  borderBottom: '1px solid #f0f0f0',
-                  fontSize: 13,
-                }}
-              >
-                <span
-                  style={{
-                    width: 60,
-                    flexShrink: 0,
-                    fontSize: 11,
-                    padding: '2px 5px',
-                    borderRadius: 3,
-                    background:
-                      item.status === 'done'
-                        ? '#d4edda'
-                        : item.status === 'error'
-                        ? '#f8d7da'
-                        : item.status === 'pending'
-                        ? '#e2e3e5'
-                        : '#fff3cd',
-                    textAlign: 'center',
-                  }}
-                >
-                  {STATUS_LABEL[item.status]}
-                </span>
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {item.file.name}
-                </span>
-                <span style={{ flexShrink: 0, color: '#888', fontSize: 11 }}>
-                  {(item.file.size / 1024 / 1024).toFixed(1)} MB
-                </span>
-                {item.status === 'error' && (
-                  <button
-                    onClick={() => retryItem(item.id)}
-                    style={{ fontSize: 11, padding: '2px 8px', cursor: 'pointer', flexShrink: 0 }}
-                  >
-                    再試行
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+          {summary.total > 0 && (
+            <div style={{ fontSize: 12, color: textColor, marginBottom: 8 }}>
+              全{summary.total}件 | 処理中: {summary.active} | 完了: {summary.done} | エラー: {summary.error}
+              {summary.done > 0 && (
+                <button onClick={clearDone} style={{ marginLeft: 8, fontSize: 11, cursor: 'pointer', padding: '1px 6px', borderRadius: 3 }}>
+                  完了を消す
+                </button>
+              )}
+            </div>
+          )}
 
-      {/* Post list */}
-      <div>
-        <h3 style={{ margin: '0 0 12px' }}>投稿一覧</h3>
-        {pollError && (
-          <p style={{ fontSize: 12, color: '#aaa' }}>{pollError}</p>
-        )}
-        {posts.length === 0 ? (
-          <p style={{ color: '#888' }}>まだ投稿はありません</p>
-        ) : (
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {posts.map((p) => (
-              <li key={p.id} style={{ borderBottom: '1px solid #eee', padding: '8px 0' }}>
-                <span style={{ fontWeight: 'bold' }}>{p.nickname}</span>
-                <span style={{ marginLeft: 8, fontSize: 12, color: '#888' }}>
-                  {new Date(p.created_at * 1000).toLocaleString('ja-JP')}
-                </span>
-                <span
-                  style={{
-                    marginLeft: 8,
-                    fontSize: 11,
-                    background: '#e0e0e0',
-                    borderRadius: 3,
-                    padding: '1px 5px',
-                  }}
-                >
-                  {p.file_type}
-                </span>
-                {p.nickname === nickname && (
-                  <span
-                    style={{
-                      marginLeft: 8,
-                      fontSize: 11,
-                      background: '#cce5ff',
-                      borderRadius: 3,
-                      padding: '1px 5px',
-                    }}
-                  >
-                    自分
+          {items.length > 0 && (
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {items.map(item => (
+                <li key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: `1px solid ${bgUrl ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
+                  <span style={{
+                    width: 56, flexShrink: 0, fontSize: 11, padding: '2px 4px', borderRadius: 3, textAlign: 'center',
+                    background: item.status === 'done' ? '#d4edda' : item.status === 'error' ? '#f8d7da' : item.status === 'pending' ? '#e2e3e5' : '#fff3cd',
+                    color: '#333',
+                  }}>{STATUS_LABEL[item.status]}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
+                  <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>{(item.file.size / 1024 / 1024).toFixed(1)}MB</span>
+                  {item.status === 'error' && (
+                    <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '2px 7px', cursor: 'pointer', flexShrink: 0 }}>再試行</button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Post list card */}
+        <div style={cardStyle}>
+          <h3 style={{ margin: '0 0 12px', fontSize: 15 }}>投稿一覧</h3>
+          {pollError && <p style={{ fontSize: 12, opacity: 0.7, margin: '0 0 8px' }}>{pollError}</p>}
+          {posts.length === 0 ? (
+            <p style={{ fontSize: 13, opacity: 0.6, margin: 0 }}>まだ投稿はありません</p>
+          ) : (
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {posts.map(p => (
+                <li key={p.id} style={{ padding: '7px 0', borderBottom: `1px solid ${bgUrl ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
+                  <span style={{ fontWeight: 'bold', color: accentColor }}>{p.nickname}</span>
+                  <span style={{ marginLeft: 8, fontSize: 11, opacity: 0.65 }}>
+                    {new Date(p.created_at * 1000).toLocaleString('ja-JP')}
                   </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+                  {p.nickname === nickname && (
+                    <span style={{ marginLeft: 8, fontSize: 10, background: accentColor, color: '#fff', borderRadius: 10, padding: '1px 6px' }}>自分</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );

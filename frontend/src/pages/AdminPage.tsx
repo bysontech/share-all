@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, ApiError, type RoomInfo, type AdminPost, type SlideshowSettings } from '../api/client';
+import { api, ApiError, type RoomInfo, type AdminPost, type SlideshowSettings, type ThemeSettings } from '../api/client';
+import { putToR2 } from '../api/client';
 
 // ---- Sub-components ----
 
@@ -127,6 +128,169 @@ function SlideshowSettingsForm({
   );
 }
 
+// ---- Theme settings form ----
+
+const EMPTY_THEME: ThemeSettings = {
+  title: null,
+  message: null,
+  mainVisualKey: null,
+  backgroundImageKey: null,
+  themeColor: null,
+  animationMode: 'none',
+};
+
+function ThemeSettingsForm({
+  initial,
+  roomId,
+  hostToken,
+  onSaved,
+}: {
+  initial: ThemeSettings;
+  roomId: string;
+  hostToken: string;
+  onSaved: (t: ThemeSettings) => void;
+}) {
+  const [title, setTitle] = useState(initial.title ?? '');
+  const [message, setMessage] = useState(initial.message ?? '');
+  const [themeColor, setThemeColor] = useState(initial.themeColor ?? '#b8860b');
+  const [animationMode, setAnimationMode] = useState(initial.animationMode);
+  const [mainVisualKey, setMainVisualKey] = useState<string | null>(initial.mainVisualKey);
+  const [bgKey, setBgKey] = useState<string | null>(initial.backgroundImageKey);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [uploadingMain, setUploadingMain] = useState(false);
+  const [uploadingBg, setUploadingBg] = useState(false);
+
+  useEffect(() => {
+    setTitle(initial.title ?? '');
+    setMessage(initial.message ?? '');
+    setThemeColor(initial.themeColor ?? '#b8860b');
+    setAnimationMode(initial.animationMode);
+    setMainVisualKey(initial.mainVisualKey);
+    setBgKey(initial.backgroundImageKey);
+  }, [initial.title, initial.message, initial.themeColor, initial.animationMode, initial.mainVisualKey, initial.backgroundImageKey]);
+
+  async function uploadImage(
+    file: File,
+    imageType: 'main_visual' | 'background',
+    setKey: (k: string) => void,
+    setUploading: (v: boolean) => void
+  ) {
+    setUploading(true);
+    try {
+      const res = await api.getThemeUploadUrl(roomId, hostToken, imageType, file.type, file.size);
+      await putToR2(res.uploadUrl, file);
+      setKey(res.fileKey);
+    } catch (e) {
+      alert(e instanceof ApiError ? e.message : '画像のアップロードに失敗しました');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg('');
+    try {
+      const updated = await api.updateTheme(roomId, hostToken, {
+        title: title.trim() || null,
+        message: message.trim() || null,
+        mainVisualKey,
+        backgroundImageKey: bgKey,
+        themeColor: themeColor || null,
+        animationMode,
+      });
+      onSaved(updated);
+      setMsg('保存しました');
+    } catch (e) {
+      setMsg(e instanceof ApiError ? `エラー: ${e.message}` : '保存に失敗しました');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputStyle: React.CSSProperties = { width: '100%', padding: '7px 10px', boxSizing: 'border-box', marginTop: 4 };
+  const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, marginBottom: 10 };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label style={labelStyle}>
+        タイトル
+        <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例: 田中・山田 結婚式" style={inputStyle} />
+      </label>
+      <label style={labelStyle}>
+        メッセージ
+        <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3} placeholder="ご参加ありがとうございます" style={{ ...inputStyle, resize: 'vertical' }} />
+      </label>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <label style={{ ...labelStyle, flex: 1, minWidth: 160 }}>
+          テーマカラー
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <input type="color" value={themeColor} onChange={(e) => setThemeColor(e.target.value)} style={{ width: 48, height: 32, cursor: 'pointer' }} />
+            <input type="text" value={themeColor} onChange={(e) => setThemeColor(e.target.value)} style={{ flex: 1, padding: '6px 8px' }} />
+          </div>
+        </label>
+        <label style={{ ...labelStyle, flex: 1, minWidth: 160 }}>
+          アニメーション
+          <select value={animationMode} onChange={(e) => setAnimationMode(e.target.value)} style={{ ...inputStyle }}>
+            <option value="none">なし</option>
+            <option value="fade">フェード</option>
+            <option value="float">フロート</option>
+          </select>
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <label style={{ ...labelStyle, flex: 1, minWidth: 200 }}>
+          メインビジュアル
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadImage(f, 'main_visual', setMainVisualKey, setUploadingMain);
+                e.target.value = '';
+              }}
+              style={{ display: 'none' }}
+              id="main-visual-input"
+            />
+            <label htmlFor="main-visual-input" style={{ padding: '5px 12px', background: '#555', color: '#fff', borderRadius: 3, cursor: 'pointer', fontSize: 13 }}>
+              {uploadingMain ? 'アップロード中...' : '選択'}
+            </label>
+            {mainVisualKey && <span style={{ fontSize: 11, color: '#888', wordBreak: 'break-all' }}>設定済み ✓</span>}
+          </div>
+        </label>
+        <label style={{ ...labelStyle, flex: 1, minWidth: 200 }}>
+          背景画像
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadImage(f, 'background', setBgKey, setUploadingBg);
+                e.target.value = '';
+              }}
+              style={{ display: 'none' }}
+              id="bg-image-input"
+            />
+            <label htmlFor="bg-image-input" style={{ padding: '5px 12px', background: '#555', color: '#fff', borderRadius: 3, cursor: 'pointer', fontSize: 13 }}>
+              {uploadingBg ? 'アップロード中...' : '選択'}
+            </label>
+            {bgKey && <span style={{ fontSize: 11, color: '#888', wordBreak: 'break-all' }}>設定済み ✓</span>}
+          </div>
+        </label>
+      </div>
+      <div>
+        <button onClick={handleSave} disabled={saving || uploadingMain || uploadingBg} style={{ padding: '8px 24px', cursor: 'pointer', fontWeight: 'bold', marginTop: 4 }}>
+          {saving ? '保存中...' : 'テーマを保存'}
+        </button>
+        {msg && <span style={{ marginLeft: 12, fontSize: 13, color: msg.startsWith('エラー') ? 'red' : 'green' }}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
 // ---- Main component ----
 
 export default function AdminPage() {
@@ -152,6 +316,8 @@ export default function AdminPage() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState('');
 
+  const [theme, setTheme] = useState<ThemeSettings>(EMPTY_THEME);
+
   const participantUrl = roomId ? `${window.location.origin}/room/${roomId}` : '';
 
   // Load room info
@@ -163,10 +329,11 @@ export default function AdminPage() {
       .catch((e) => setRoomError(e instanceof ApiError ? e.message : 'ルーム情報の取得に失敗しました'));
   }, [roomId]);
 
-  // Load slideshow settings
+  // Load slideshow settings and theme
   useEffect(() => {
     if (!roomId) return;
     api.getSlideshowSettings(roomId).then(setSettings).catch(() => {});
+    api.getTheme(roomId).then(setTheme).catch(() => {});
   }, [roomId]);
 
   const loadPosts = useCallback(async () => {
@@ -361,7 +528,7 @@ export default function AdminPage() {
       </section>
 
       {/* Slideshow settings */}
-      <section>
+      <section style={{ marginBottom: 32 }}>
         <h3 style={{ margin: '0 0 14px' }}>スライドショー設定</h3>
         <SlideshowSettingsForm initial={settings} onSave={handleSaveSettings} saving={settingsSaving} />
         {settingsMsg && (
@@ -369,6 +536,17 @@ export default function AdminPage() {
             {settingsMsg}
           </p>
         )}
+      </section>
+
+      {/* Theme settings */}
+      <section style={{ marginBottom: 32 }}>
+        <h3 style={{ margin: '0 0 14px' }}>テーマ設定（参加者画面）</h3>
+        <ThemeSettingsForm
+          initial={theme}
+          roomId={roomId ?? ''}
+          hostToken={hostToken}
+          onSaved={setTheme}
+        />
       </section>
     </div>
   );

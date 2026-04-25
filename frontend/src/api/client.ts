@@ -79,6 +79,25 @@ export interface ViewUrlsResponse {
   expiresAt: number;
 }
 
+export interface ThemeSettings {
+  title: string | null;
+  message: string | null;
+  mainVisualKey: string | null;
+  backgroundImageKey: string | null;
+  themeColor: string | null;
+  animationMode: string;
+}
+
+export interface ThemeViewUrls {
+  viewUrls: Record<string, string>;
+  expiresAt?: number;
+}
+
+export interface ThemeUploadUrlResponse {
+  uploadUrl: string;
+  fileKey: string;
+}
+
 export const api = {
   createRoom: (body: { name: string; passcode?: string; description?: string }) =>
     request<CreateRoomResponse>('/rooms', {
@@ -128,6 +147,32 @@ export const api = {
     request<ViewUrlsResponse>(`/rooms/${roomId}/posts/view-urls`, {
       method: 'POST',
       body: JSON.stringify({ postIds }),
+    }),
+
+  // Theme APIs
+  getTheme: (roomId: string) => request<ThemeSettings>(`/rooms/${roomId}/theme`),
+
+  updateTheme: (roomId: string, hostToken: string, settings: Partial<ThemeSettings>) =>
+    request<ThemeSettings>(`/rooms/${roomId}/theme`, {
+      method: 'PUT',
+      headers: { 'X-Host-Token': hostToken },
+      body: JSON.stringify(settings),
+    }),
+
+  getThemeViewUrls: (roomId: string) =>
+    request<ThemeViewUrls>(`/rooms/${roomId}/theme/view-urls`, { method: 'POST', body: '{}' }),
+
+  getThemeUploadUrl: (
+    roomId: string,
+    hostToken: string,
+    imageType: 'main_visual' | 'background',
+    mimeType: string,
+    fileSize: number
+  ) =>
+    request<ThemeUploadUrlResponse>(`/rooms/${roomId}/theme/upload-url`, {
+      method: 'POST',
+      headers: { 'X-Host-Token': hostToken },
+      body: JSON.stringify({ imageType, mimeType, fileSize }),
     }),
 
   // Admin APIs
