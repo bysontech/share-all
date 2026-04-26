@@ -5,6 +5,7 @@ import HomePage from './pages/HomePage';
 import RoomPage from './pages/RoomPage';
 import AdminPage from './pages/AdminPage';
 import SlideshowPage from './pages/SlideshowPage';
+import GalleryPage from './pages/GalleryPage';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -13,6 +14,7 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/" element={<HomePage />} />
         <Route path="/room/:roomId" element={<RoomPage />} />
         <Route path="/room/:roomId/slideshow" element={<SlideshowPage />} />
+        <Route path="/room/:roomId/gallery" element={<GalleryPage />} />
         <Route path="/admin/:roomId" element={<AdminPage />} />
       </Routes>
     </BrowserRouter>
