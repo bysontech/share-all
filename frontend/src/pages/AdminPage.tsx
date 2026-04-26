@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, ApiError, type RoomInfo, type AdminPost, type SlideshowSettings, type ThemeSettings } from '../api/client';
 import { putToR2 } from '../api/client';
@@ -307,6 +307,9 @@ export default function AdminPage() {
   const [posts, setPosts] = useState<AdminPost[]>([]);
   const [postsError, setPostsError] = useState('');
   const [postsLoading, setPostsLoading] = useState(false);
+  const [actionMsg, setActionMsg] = useState('');
+  const [copyMsg, setCopyMsg] = useState('');
+  const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [settings, setSettings] = useState<SlideshowSettings>({
     intervalSeconds: 5,
@@ -360,9 +363,15 @@ export default function AdminPage() {
     if (hostToken) loadPosts();
   }, [hostToken, loadPosts]);
 
+  function showAction(msg: string) {
+    setActionMsg(msg);
+    if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+    actionTimerRef.current = setTimeout(() => setActionMsg(''), 4000);
+  }
+
   function handleTokenSubmit() {
     const t = tokenInput.trim();
-    if (!t) return;
+    if (!t) { setTokenError('トークンを入力してください'); return; }
     localStorage.setItem(tokenKey, t);
     setHostToken(t);
     setTokenError('');
@@ -373,8 +382,9 @@ export default function AdminPage() {
     try {
       await api.updatePostStatus(roomId, postId, hostToken, next);
       setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, status: next } : p)));
+      showAction(next === 'hidden' ? '非表示にしました' : '表示に変更しました');
     } catch (e) {
-      alert(e instanceof ApiError ? e.message : '更新に失敗しました');
+      showAction(e instanceof ApiError ? `エラー: ${e.message}` : '更新に失敗しました');
     }
   }
 
@@ -384,8 +394,9 @@ export default function AdminPage() {
     try {
       await api.deletePost(roomId, postId, hostToken);
       setPosts((prev) => prev.filter((p) => p.id !== postId));
+      showAction('削除しました');
     } catch (e) {
-      alert(e instanceof ApiError ? e.message : '削除に失敗しました');
+      showAction(e instanceof ApiError ? `エラー: ${e.message}` : '削除に失敗しました');
     }
   }
 
@@ -467,10 +478,14 @@ export default function AdminPage() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <code style={{ fontSize: 13, wordBreak: 'break-all', flex: 1 }}>{participantUrl}</code>
           <button
-            onClick={() => navigator.clipboard.writeText(participantUrl)}
+            onClick={() => {
+              navigator.clipboard.writeText(participantUrl)
+                .then(() => { setCopyMsg('コピーしました'); setTimeout(() => setCopyMsg(''), 2500); })
+                .catch(() => { setCopyMsg('コピー失敗'); setTimeout(() => setCopyMsg(''), 2500); });
+            }}
             style={{ padding: '4px 10px', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >
-            コピー
+            {copyMsg || 'コピー'}
           </button>
           <Link
             to={`/room/${roomId}/slideshow`}
@@ -481,6 +496,17 @@ export default function AdminPage() {
           </Link>
         </div>
       </section>
+
+      {/* Action feedback */}
+      {actionMsg && (
+        <div style={{
+          marginBottom: 12, padding: '10px 14px', borderRadius: 6, fontSize: 13,
+          background: actionMsg.startsWith('エラー') || actionMsg.includes('失敗') ? '#f8d7da' : '#d4edda',
+          color: actionMsg.startsWith('エラー') || actionMsg.includes('失敗') ? '#721c24' : '#155724',
+        }}>
+          {actionMsg}
+        </div>
+      )}
 
       {/* Post list */}
       <section style={{ marginBottom: 32 }}>
