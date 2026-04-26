@@ -170,10 +170,50 @@ theme.post('/upload-url', async (c) => {
       mimeType: body.mimeType,
       exp: now + expirySeconds,
     });
-    uploadUrl = `/api/rooms/${roomId}/posts/${fileId}/upload-body?token=${encodeURIComponent(token)}`;
+    uploadUrl = `/api/rooms/${roomId}/theme/upload-body/${fileId}?token=${encodeURIComponent(token)}`;
   }
 
   return c.json({ uploadUrl, fileKey }, 201);
+});
+
+theme.put('/upload-body/:fileId', async (c) => {
+  const { roomId, fileId } = c.req.param() as { roomId: string; fileId: string };
+  const token = c.req.query('token');
+  if (!token) return err('token is required', 400);
+
+  const secret = c.env.UPLOAD_BODY_SIGNING_SECRET;
+  if (!secret) return err('Upload proxy not configured', 501);
+
+  const { verifyUploadBodyToken } = await import('../uploadBodyToken');
+  const payload = await verifyUploadBodyToken(secret, token);
+  if (!payload || payload.postId !== fileId || payload.roomId !== roomId) {
+    return err('Invalid or expired token', 403);
+  }
+
+  const roomResult = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in roomResult) return err(roomResult.error, roomResult.status);
+
+  const contentLength = c.req.header('Content-Length');
+  if (contentLength) {
+    const n = parseInt(contentLength, 10);
+    if (!Number.isFinite(n) || n > MAX_IMAGE_SIZE) {
+      return err('File too large (max 20MB)', 413);
+    }
+  }
+
+  const body = c.req.raw.body;
+  if (!body) return err('Body is required', 400);
+
+  try {
+    await c.env.STORAGE.put(payload.fileKey, body, {
+      httpMetadata: { contentType: payload.mimeType },
+    });
+  } catch (e) {
+    console.error('Theme upload-body proxy failed', { fileKey: payload.fileKey, error: e });
+    return err('Storage upload failed', 500);
+  }
+
+  return new Response(null, { status: 204 });
 });
 
 theme.post('/view-urls', async (c) => {
