@@ -258,9 +258,9 @@ export default function RoomPage() {
         <div style={cardStyle}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>写真をシェア</h3>
-            <Link to={`/room/${roomId}/slideshow`}
+            <Link to={`/room/${roomId}/gallery`}
               style={{ fontSize: 12, padding: '5px 12px', background: accentColor, color: '#fff', borderRadius: 20, textDecoration: 'none' }}>
-              スライドショー
+              アルバムを見る
             </Link>
           </div>
           <label style={{ ...primaryBtnStyle, background: accentColor, display: 'inline-block', marginBottom: 12 }}>
