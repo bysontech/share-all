@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import { api, type Post } from '../api/client';
 
 const SAVED_KEY = (roomId: string) => `room:${roomId}:savedPostIds`;
+// Re-fetch viewUrls when less than 2 minutes remain on the expiry
+const VIEW_URL_REFRESH_BUFFER_SEC = 120;
 
 function loadSaved(roomId: string): Set<string> {
   try {
@@ -26,6 +28,11 @@ function isImagePost(p: Post) {
   return p.mime_type.startsWith('image/');
 }
 
+interface ViewUrlCache {
+  urls: Record<string, string>;
+  expiresAt: number; // unix seconds
+}
+
 interface DlResult {
   succeeded: number;
   failed: number;
@@ -35,9 +42,12 @@ export default function GalleryPage() {
   const { roomId } = useParams<{ roomId: string }>();
 
   const [posts, setPosts] = useState<Post[]>([]);
-  const [viewUrls, setViewUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const [viewUrlCache, setViewUrlCache] = useState<ViewUrlCache>({ urls: {}, expiresAt: 0 });
+  const viewUrlCacheRef = useRef(viewUrlCache);
+  viewUrlCacheRef.current = viewUrlCache;
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<Set<string>>(() => loadSaved(roomId ?? ''));
@@ -47,6 +57,8 @@ export default function GalleryPage() {
 
   const savedRef = useRef(saved);
   savedRef.current = saved;
+  const postsRef = useRef(posts);
+  postsRef.current = posts;
 
   useEffect(() => {
     if (!roomId) return;
@@ -57,11 +69,33 @@ export default function GalleryPage() {
         setPosts(imgs);
         if (imgs.length === 0) { setLoading(false); return; }
         const ids = imgs.map(p => p.id);
-        return api.getViewUrls(roomId, ids).then(v => setViewUrls(v.viewUrls));
+        return api.getViewUrls(roomId, ids).then(v =>
+          setViewUrlCache({ urls: v.viewUrls, expiresAt: v.expiresAt })
+        );
       })
       .catch(() => setError('データの取得に失敗しました。ページを再読み込みしてください。'))
       .finally(() => setLoading(false));
   }, [roomId]);
+
+  // Returns up-to-date viewUrls, refreshing if near expiry
+  async function getViewUrls(): Promise<Record<string, string>> {
+    if (!roomId) return viewUrlCacheRef.current.urls;
+    const now = Math.floor(Date.now() / 1000);
+    if (viewUrlCacheRef.current.expiresAt - now > VIEW_URL_REFRESH_BUFFER_SEC) {
+      return viewUrlCacheRef.current.urls;
+    }
+    try {
+      const ids = postsRef.current.map(p => p.id);
+      if (ids.length === 0) return {};
+      const res = await api.getViewUrls(roomId, ids);
+      const fresh: ViewUrlCache = { urls: res.viewUrls, expiresAt: res.expiresAt };
+      setViewUrlCache(fresh);
+      viewUrlCacheRef.current = fresh;
+      return res.viewUrls;
+    } catch {
+      return viewUrlCacheRef.current.urls; // fall back to stale
+    }
+  }
 
   function toggleSelect(id: string) {
     setSelected(prev => {
@@ -81,12 +115,16 @@ export default function GalleryPage() {
     if (targets.length === 0) return;
     setDlResult(null);
     setProgress({ current: 0, total: targets.length });
+
+    // Ensure URLs are fresh before starting sequential download
+    const urls = await getViewUrls();
+
     const newSaved = new Set(savedRef.current);
     let done = 0;
     let failCount = 0;
 
     for (const post of targets) {
-      const url = viewUrls[post.id];
+      const url = urls[post.id];
       if (!url) {
         failCount++;
         done++;
@@ -118,8 +156,6 @@ export default function GalleryPage() {
     if (roomId) persistSaved(roomId, newSaved);
     setProgress(null);
     setDlResult({ succeeded: targets.length - failCount, failed: failCount });
-
-    // auto-dismiss result after 5s
     setTimeout(() => setDlResult(null), 5000);
   }
 
@@ -170,24 +206,9 @@ export default function GalleryPage() {
     WebkitTapHighlightColor: 'transparent',
   };
 
-  const primaryBtn: React.CSSProperties = {
-    ...btnBase,
-    background: accentColor,
-    color: '#fff',
-  };
-
-  const secondaryBtn: React.CSSProperties = {
-    ...btnBase,
-    background: '#e8e0d0',
-    color: '#555',
-  };
-
-  const disabledBtn: React.CSSProperties = {
-    ...btnBase,
-    background: '#ccc',
-    color: '#999',
-    cursor: 'not-allowed',
-  };
+  const primaryBtn: React.CSSProperties = { ...btnBase, background: accentColor, color: '#fff' };
+  const secondaryBtn: React.CSSProperties = { ...btnBase, background: '#e8e0d0', color: '#555' };
+  const disabledBtn: React.CSSProperties = { ...btnBase, background: '#ccc', color: '#999', cursor: 'not-allowed' };
 
   if (loading) {
     return (
@@ -208,6 +229,7 @@ export default function GalleryPage() {
 
   const unsavedCount = posts.filter(p => !saved.has(p.id)).length;
   const isDownloading = progress !== null;
+  const viewUrls = viewUrlCache.urls;
 
   return (
     <div style={outerStyle}>
