@@ -103,6 +103,7 @@ export default function RoomPage() {
     minHeight: '100vh',
     position: 'relative',
     fontFamily: 'Georgia, "Noto Serif JP", serif',
+    overflowX: 'hidden',
   };
 
   // Background layer
@@ -139,7 +140,7 @@ export default function RoomPage() {
 
   const primaryBtnStyle: React.CSSProperties = {
     display: 'inline-block',
-    padding: '10px 22px',
+    padding: '12px 22px',
     background: accentColor,
     color: '#fff',
     border: 'none',
@@ -148,6 +149,9 @@ export default function RoomPage() {
     fontSize: 14,
     fontWeight: 'bold',
     letterSpacing: 1,
+    minHeight: 44,
+    boxSizing: 'border-box',
+    WebkitTapHighlightColor: 'transparent',
   };
 
   const textColor = bgUrl ? 'rgba(255,255,255,0.8)' : '#666';
@@ -175,10 +179,11 @@ export default function RoomPage() {
             <input
               type="text" value={passcodeInput}
               onChange={e => setPasscodeInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && setPasscodeVerified(true)}
               placeholder="パスコード"
-              style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginBottom: 12, borderRadius: 6, border: '1px solid #ccc' }}
+              style={{ width: '100%', padding: '12px', boxSizing: 'border-box', marginBottom: 12, borderRadius: 6, border: '1px solid #ccc', fontSize: 16 }}
             />
-            <button onClick={() => setPasscodeVerified(true)} style={{ ...primaryBtnStyle, width: '100%' }}>
+            <button onClick={() => setPasscodeVerified(true)} style={{ ...primaryBtnStyle, width: '100%', display: 'block' }}>
               入室する
             </button>
           </div>
@@ -215,9 +220,9 @@ export default function RoomPage() {
               onChange={e => setNicknameInput(e.target.value)}
               placeholder="例: 太郎"
               onKeyDown={e => e.key === 'Enter' && handleNicknameSubmit()}
-              style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginBottom: 12, borderRadius: 6, border: '1px solid #ccc', textAlign: 'center', fontSize: 16 }}
+              style={{ width: '100%', padding: '12px', boxSizing: 'border-box', marginBottom: 12, borderRadius: 6, border: '1px solid #ccc', textAlign: 'center', fontSize: 16 }}
             />
-            <button onClick={handleNicknameSubmit} style={{ ...primaryBtnStyle, width: '100%' }}>
+            <button onClick={handleNicknameSubmit} style={{ ...primaryBtnStyle, width: '100%', display: 'block' }}>
               参加する
             </button>
           </div>
@@ -270,10 +275,13 @@ export default function RoomPage() {
           </label>
 
           {summary.total > 0 && (
-            <div style={{ fontSize: 12, color: textColor, marginBottom: 8 }}>
-              全{summary.total}件 | 処理中: {summary.active} | 完了: {summary.done} | エラー: {summary.error}
+            <div style={{ fontSize: 12, color: textColor, marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              <span>全{summary.total}件</span>
+              {summary.active > 0 && <span>処理中: {summary.active}</span>}
+              {summary.done > 0 && <span>完了: {summary.done}</span>}
+              {summary.error > 0 && <span style={{ color: '#f88' }}>エラー: {summary.error}</span>}
               {summary.done > 0 && (
-                <button onClick={clearDone} style={{ marginLeft: 8, fontSize: 11, cursor: 'pointer', padding: '1px 6px', borderRadius: 3 }}>
+                <button onClick={clearDone} style={{ fontSize: 11, cursor: 'pointer', padding: '4px 8px', borderRadius: 3, minHeight: 28 }}>
                   完了を消す
                 </button>
               )}
@@ -283,16 +291,21 @@ export default function RoomPage() {
           {items.length > 0 && (
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
               {items.map(item => (
-                <li key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: `1px solid ${bgUrl ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
+                <li key={item.id} style={{ padding: '6px 0', borderBottom: `1px solid ${bgUrl ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{
-                    width: 56, flexShrink: 0, fontSize: 11, padding: '2px 4px', borderRadius: 3, textAlign: 'center',
+                    width: 56, flexShrink: 0, fontSize: 11, padding: '4px', borderRadius: 3, textAlign: 'center',
                     background: item.status === 'done' ? '#d4edda' : item.status === 'error' ? '#f8d7da' : item.status === 'pending' ? '#e2e3e5' : '#fff3cd',
                     color: '#333',
                   }}>{STATUS_LABEL[item.status]}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
                   <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>{(item.file.size / 1024 / 1024).toFixed(1)}MB</span>
                   {item.status === 'error' && (
-                    <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '2px 7px', cursor: 'pointer', flexShrink: 0 }}>再試行</button>
+                    <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '6px 10px', cursor: 'pointer', flexShrink: 0, minHeight: 32 }}>再試行</button>
+                  )}
+                  </div>
+                  {item.status === 'error' && item.error && (
+                    <p style={{ margin: '2px 0 0 64px', fontSize: 11, color: '#c00' }}>{item.error}</p>
                   )}
                 </li>
               ))}
