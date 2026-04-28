@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, ApiError, type RoomInfo, type ThemeSettings } from '../api/client';
 import { useUploadQueue } from '../hooks/useUploadQueue';
-import { usePostsPolling } from '../hooks/usePostsPolling';
 import type { QueueItem } from '../hooks/useUploadQueue';
 
 const EMPTY_THEME: ThemeSettings = {
@@ -39,7 +38,6 @@ function injectKeyframes() {
   injected = true;
   const style = document.createElement('style');
   style.textContent = `
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     @keyframes floatY { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
     @keyframes roomFadeIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
   `;
@@ -60,14 +58,9 @@ export default function RoomPage() {
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeVerified, setPasscodeVerified] = useState(false);
 
-  const { posts, error: pollError, addPost } = usePostsPolling(
-    nickname && passcodeVerified ? roomId : undefined
-  );
-
   const { items, addFiles, retryItem, clearDone, summary } = useUploadQueue({
     roomId: roomId ?? '',
     nickname,
-    onPostComplete: addPost,
   });
 
   useEffect(() => {
@@ -106,7 +99,6 @@ export default function RoomPage() {
     overflowX: 'hidden',
   };
 
-  // Background layer
   const bgLayerStyle: React.CSSProperties = {
     position: 'fixed', inset: 0, zIndex: 0,
     backgroundImage: bgUrl ? `url(${bgUrl})` : 'linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)',
@@ -238,7 +230,7 @@ export default function RoomPage() {
       <div style={overlayStyle} />
       <div style={contentStyle}>
         {/* Header */}
-        <div style={{ paddingTop: 32, paddingBottom: 20, textAlign: 'center' }}>
+        <div style={{ paddingTop: 32, paddingBottom: 24, textAlign: 'center' }}>
           {mainVisualUrl && (
             <img src={mainVisualUrl} alt="main visual"
               style={{
@@ -261,13 +253,8 @@ export default function RoomPage() {
 
         {/* Upload card */}
         <div style={cardStyle}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>写真をシェア</h3>
-            <Link to={`/room/${roomId}/gallery`}
-              style={{ fontSize: 12, padding: '5px 12px', background: accentColor, color: '#fff', borderRadius: 20, textDecoration: 'none' }}>
-              アルバムを見る
-            </Link>
-          </div>
+          <h3 style={{ margin: '0 0 14px', fontSize: 15, fontWeight: 'bold' }}>写真をシェア</h3>
+
           <label style={{ ...primaryBtnStyle, background: accentColor, display: 'inline-block', marginBottom: 12 }}>
             写真を選択
             <input type="file" accept="image/jpeg,image/png,image/webp,image/heic" multiple
@@ -289,20 +276,20 @@ export default function RoomPage() {
           )}
 
           {items.length > 0 && (
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 8px' }}>
               {items.map(item => (
                 <li key={item.id} style={{ padding: '6px 0', borderBottom: `1px solid ${bgUrl ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{
-                    width: 56, flexShrink: 0, fontSize: 11, padding: '4px', borderRadius: 3, textAlign: 'center',
-                    background: item.status === 'done' ? '#d4edda' : item.status === 'error' ? '#f8d7da' : item.status === 'pending' ? '#e2e3e5' : '#fff3cd',
-                    color: '#333',
-                  }}>{STATUS_LABEL[item.status]}</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
-                  <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>{(item.file.size / 1024 / 1024).toFixed(1)}MB</span>
-                  {item.status === 'error' && (
-                    <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '6px 10px', cursor: 'pointer', flexShrink: 0, minHeight: 32 }}>再試行</button>
-                  )}
+                    <span style={{
+                      width: 56, flexShrink: 0, fontSize: 11, padding: '4px', borderRadius: 3, textAlign: 'center',
+                      background: item.status === 'done' ? '#d4edda' : item.status === 'error' ? '#f8d7da' : item.status === 'pending' ? '#e2e3e5' : '#fff3cd',
+                      color: '#333',
+                    }}>{STATUS_LABEL[item.status]}</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
+                    <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>{(item.file.size / 1024 / 1024).toFixed(1)}MB</span>
+                    {item.status === 'error' && (
+                      <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '6px 10px', cursor: 'pointer', flexShrink: 0, minHeight: 32 }}>再試行</button>
+                    )}
                   </div>
                   {item.status === 'error' && item.error && (
                     <p style={{ margin: '2px 0 0 64px', fontSize: 11, color: '#c00' }}>{item.error}</p>
@@ -311,29 +298,32 @@ export default function RoomPage() {
               ))}
             </ul>
           )}
+
+          {/* Gallery hint after successful upload */}
+          {summary.done > 0 && summary.active === 0 && (
+            <p style={{ margin: '10px 0 0', fontSize: 12, color: textColor, opacity: 0.85 }}>
+              写真を共有しました。アルバムから確認できます。
+            </p>
+          )}
         </div>
 
-        {/* Post list card */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 15 }}>投稿一覧</h3>
-          {pollError && <p style={{ fontSize: 12, opacity: 0.7, margin: '0 0 8px' }}>{pollError}</p>}
-          {posts.length === 0 ? (
-            <p style={{ fontSize: 13, opacity: 0.6, margin: 0 }}>まだ投稿はありません</p>
-          ) : (
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {posts.map(p => (
-                <li key={p.id} style={{ padding: '7px 0', borderBottom: `1px solid ${bgUrl ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
-                  <span style={{ fontWeight: 'bold', color: accentColor }}>{p.nickname}</span>
-                  <span style={{ marginLeft: 8, fontSize: 11, opacity: 0.65 }}>
-                    {new Date(p.created_at * 1000).toLocaleString('ja-JP')}
-                  </span>
-                  {p.nickname === nickname && (
-                    <span style={{ marginLeft: 8, fontSize: 10, background: accentColor, color: '#fff', borderRadius: 10, padding: '1px 6px' }}>自分</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+        {/* Album link card */}
+        <div style={{ ...cardStyle, textAlign: 'center', marginBottom: 0 }}>
+          <p style={{ margin: '0 0 12px', fontSize: 13, color: textColor }}>
+            みんなの写真をまとめて見る・保存する
+          </p>
+          <Link
+            to={`/room/${roomId}/gallery`}
+            style={{
+              ...primaryBtnStyle,
+              display: 'inline-block',
+              textDecoration: 'none',
+              fontSize: 15,
+              padding: '14px 32px',
+            }}
+          >
+            アルバムを見る
+          </Link>
         </div>
       </div>
     </div>

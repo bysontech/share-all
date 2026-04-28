@@ -18,7 +18,7 @@ const MAX_CONCURRENT = 3;
 interface UseUploadQueueOptions {
   roomId: string;
   nickname: string;
-  onPostComplete: (post: Post) => void;
+  onPostComplete?: (post: Post) => void;
 }
 
 export function useUploadQueue({ roomId, nickname, onPostComplete }: UseUploadQueueOptions) {
@@ -66,7 +66,7 @@ export function useUploadQueue({ roomId, nickname, onPostComplete }: UseUploadQu
         await api.completeUpload(roomId, postId);
 
         updateItem(id, { status: 'done' });
-        onPostComplete({
+        onPostComplete?.({
           id: postId,
           nickname,
           file_type: 'image',
