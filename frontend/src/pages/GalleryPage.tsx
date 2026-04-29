@@ -31,6 +31,52 @@ function isImagePost(p: Post) {
   return m.startsWith('image/');
 }
 
+// ---- Download filename helpers ----
+
+function mimeToExt(mime: string): string {
+  const map: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/heic': 'heic',
+    'image/heif': 'heif',
+    'image/gif': 'gif',
+    'image/bmp': 'bmp',
+  };
+  return map[mime.toLowerCase()] ?? 'bin';
+}
+
+function sanitizeNickname(name: string): string {
+  const s = (name ?? '')
+    .replace(/[^\w]/g, '_')   // non-word chars → underscore
+    .replace(/_+/g, '_')      // collapse consecutive underscores
+    .replace(/^_+|_+$/g, '')  // trim leading/trailing underscores
+    .slice(0, 20)
+    .replace(/_+$/g, '')      // trim trailing underscore left after slice
+    .toLowerCase();
+  return s || 'guest';
+}
+
+function formatDateForFilename(unixSec: number): string {
+  const d = new Date((unixSec || Math.floor(Date.now() / 1000)) * 1000);
+  const yyyy = d.getFullYear();
+  const MM = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const HH = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${yyyy}${MM}${dd}_${HH}${mm}${ss}`;
+}
+
+function buildDownloadFilename(post: Post): string {
+  const nick = sanitizeNickname(post.nickname);
+  const ts = formatDateForFilename(post.created_at);
+  const short = post.id.slice(0, 8);
+  const ext = mimeToExt(post.mime_type);
+  return `wedding_${nick}_${ts}_${short}.${ext}`;
+}
+
 interface ViewUrlCache {
   urls: Record<string, string>;
   expiresAt: number; // unix seconds
@@ -139,8 +185,7 @@ export default function GalleryPage() {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
-        const ext = post.mime_type.split('/')[1]?.replace('jpeg', 'jpg') ?? 'jpg';
-        const filename = `photo_${post.id.slice(0, 8)}.${ext}`;
+        const filename = buildDownloadFilename(post);
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;
