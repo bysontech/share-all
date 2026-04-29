@@ -24,8 +24,11 @@ function persistSaved(roomId: string, ids: Set<string>) {
   }
 }
 
+/** SlideshowPage と同じ基準（file_type 優先）。MIME の大小・欠損でも一覧から落ちないようにする */
 function isImagePost(p: Post) {
-  return p.mime_type.startsWith('image/');
+  if (p.file_type === 'image') return true;
+  const m = p.mime_type?.toLowerCase() ?? '';
+  return m.startsWith('image/');
 }
 
 interface ViewUrlCache {
@@ -62,6 +65,7 @@ export default function GalleryPage() {
 
   useEffect(() => {
     if (!roomId) return;
+    setError('');
     setLoading(true);
     api.getPosts(roomId)
       .then(r => {

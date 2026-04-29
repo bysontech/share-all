@@ -104,11 +104,10 @@ export function useUploadQueue({ roomId, nickname, onPostComplete }: UseUploadQu
         status: 'pending',
       }));
 
-      setItems((prev) => {
-        const next = [...prev, ...newItems];
-        newItems.forEach((it) => itemsRef.current.set(it.id, it));
-        return next;
-      });
+      // itemsRef は setItems の updater より先に同期する。遅れると drainQueue → processItem が
+      // itemsRef にアイテムを見つけられず return し、キューからは既に shift 済みで永久に待機中のままになる。
+      newItems.forEach((it) => itemsRef.current.set(it.id, it));
+      setItems((prev) => [...prev, ...newItems]);
 
       newItems.forEach((it) => queueRef.current.push(it.id));
       drainQueue();
@@ -120,6 +119,14 @@ export function useUploadQueue({ roomId, nickname, onPostComplete }: UseUploadQu
     (id: string) => {
       const item = itemsRef.current.get(id);
       if (!item || item.status !== 'error') return;
+      const reset: QueueItem = {
+        ...item,
+        status: 'pending',
+        error: undefined,
+        postId: undefined,
+        uploadUrl: undefined,
+      };
+      itemsRef.current.set(id, reset);
       updateItem(id, { status: 'pending', error: undefined, postId: undefined, uploadUrl: undefined });
       queueRef.current.push(id);
       drainQueue();
