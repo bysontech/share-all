@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { api, ApiError, type RoomInfo, type ThemeSettings } from '../api/client';
 import { useUploadQueue } from '../hooks/useUploadQueue';
 import type { QueueItem } from '../hooks/useUploadQueue';
+import { getOrCreateParticipantId } from '../utils/participantId';
 
 const EMPTY_THEME: ThemeSettings = {
   title: null, message: null, mainVisualKey: null,
@@ -58,9 +59,12 @@ export default function RoomPage() {
   const [passcodeInput, setPasscodeInput] = useState('');
   const [passcodeVerified, setPasscodeVerified] = useState(false);
 
+  const [participantId] = useState(() => roomId ? getOrCreateParticipantId(roomId) : '');
+
   const { items, addFiles, retryItem, clearDone, summary } = useUploadQueue({
     roomId: roomId ?? '',
     nickname,
+    participantId,
   });
 
   useEffect(() => {

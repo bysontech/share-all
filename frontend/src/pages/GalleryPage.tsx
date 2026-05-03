@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, type Post } from '../api/client';
+import { getParticipantId } from '../utils/participantId';
 
 const SAVED_KEY = (roomId: string) => `room:${roomId}:savedPostIds`;
-// Re-fetch viewUrls when less than 2 minutes remain on the expiry
-const VIEW_URL_REFRESH_BUFFER_SEC = 120;
 
 function loadSaved(roomId: string): Set<string> {
   try {
@@ -77,6 +76,8 @@ function buildDownloadFilename(post: Post): string {
   return `wedding_${nick}_${ts}_${short}.${ext}`;
 }
 
+type FilterType = 'all' | 'others' | 'unsaved' | 'others_unsaved';
+
 interface ViewUrlCache {
   urls: Record<string, string>;
   expiresAt: number; // unix seconds
@@ -95,19 +96,37 @@ export default function GalleryPage() {
   const [error, setError] = useState('');
 
   const [viewUrlCache, setViewUrlCache] = useState<ViewUrlCache>({ urls: {}, expiresAt: 0 });
-  const viewUrlCacheRef = useRef(viewUrlCache);
-  viewUrlCacheRef.current = viewUrlCache;
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<Set<string>>(() => loadSaved(roomId ?? ''));
+  const [filter, setFilter] = useState<FilterType>('all');
+
+  const selfParticipantId = roomId ? getParticipantId(roomId) : null;
 
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [dlResult, setDlResult] = useState<DlResult | null>(null);
 
   const savedRef = useRef(saved);
   savedRef.current = saved;
-  const postsRef = useRef(posts);
-  postsRef.current = posts;
+
+  const filteredPosts = useMemo(() => {
+    switch (filter) {
+      case 'others':
+        return posts.filter(p => !selfParticipantId || p.participant_id !== selfParticipantId);
+      case 'unsaved':
+        return posts.filter(p => !saved.has(p.id));
+      case 'others_unsaved':
+        return posts.filter(p =>
+          (!selfParticipantId || p.participant_id !== selfParticipantId) && !saved.has(p.id)
+        );
+      default:
+        return posts;
+    }
+  }, [posts, filter, selfParticipantId, saved]);
+
+  useEffect(() => {
+    setSelected(new Set());
+  }, [filter]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -119,7 +138,7 @@ export default function GalleryPage() {
         setPosts(imgs);
         if (imgs.length === 0) { setLoading(false); return; }
         const ids = imgs.map(p => p.id);
-        return api.getViewUrls(roomId, ids).then(v =>
+        return api.getViewUrls(roomId, ids, true).then(v =>
           setViewUrlCache({ urls: v.viewUrls, expiresAt: v.expiresAt })
         );
       })
@@ -127,23 +146,15 @@ export default function GalleryPage() {
       .finally(() => setLoading(false));
   }, [roomId]);
 
-  // Returns up-to-date viewUrls, refreshing if near expiry
-  async function getViewUrls(): Promise<Record<string, string>> {
-    if (!roomId) return viewUrlCacheRef.current.urls;
-    const now = Math.floor(Date.now() / 1000);
-    if (viewUrlCacheRef.current.expiresAt - now > VIEW_URL_REFRESH_BUFFER_SEC) {
-      return viewUrlCacheRef.current.urls;
-    }
+  // Fetches original (non-display) URLs for downloading
+  async function fetchDownloadUrls(targets: Post[]): Promise<Record<string, string>> {
+    if (!roomId || targets.length === 0) return {};
     try {
-      const ids = postsRef.current.map(p => p.id);
-      if (ids.length === 0) return {};
-      const res = await api.getViewUrls(roomId, ids);
-      const fresh: ViewUrlCache = { urls: res.viewUrls, expiresAt: res.expiresAt };
-      setViewUrlCache(fresh);
-      viewUrlCacheRef.current = fresh;
+      const ids = targets.map(p => p.id);
+      const res = await api.getViewUrls(roomId, ids, false);
       return res.viewUrls;
     } catch {
-      return viewUrlCacheRef.current.urls; // fall back to stale
+      return {};
     }
   }
 
@@ -155,10 +166,10 @@ export default function GalleryPage() {
     });
   }
 
-  function selectAll() { setSelected(new Set(posts.map(p => p.id))); }
+  function selectAll() { setSelected(new Set(filteredPosts.map(p => p.id))); }
   function deselectAll() { setSelected(new Set()); }
   function selectUnsaved() {
-    setSelected(new Set(posts.filter(p => !savedRef.current.has(p.id)).map(p => p.id)));
+    setSelected(new Set(filteredPosts.filter(p => !saved.has(p.id)).map(p => p.id)));
   }
 
   async function downloadPosts(targets: Post[]) {
@@ -166,8 +177,7 @@ export default function GalleryPage() {
     setDlResult(null);
     setProgress({ current: 0, total: targets.length });
 
-    // Ensure URLs are fresh before starting sequential download
-    const urls = await getViewUrls();
+    const urls = await fetchDownloadUrls(targets);
 
     const newSaved = new Set(savedRef.current);
     let done = 0;
@@ -209,13 +219,13 @@ export default function GalleryPage() {
   }
 
   function handleDownloadSelected() {
-    downloadPosts(posts.filter(p => selected.has(p.id)));
+    downloadPosts(filteredPosts.filter(p => selected.has(p.id)));
   }
   function handleDownloadAll() {
-    downloadPosts(posts);
+    downloadPosts(filteredPosts);
   }
   function handleDownloadUnsaved() {
-    downloadPosts(posts.filter(p => !saved.has(p.id)));
+    downloadPosts(filteredPosts.filter(p => !saved.has(p.id)));
   }
 
   const accentColor = '#b8860b';
@@ -276,9 +286,16 @@ export default function GalleryPage() {
     );
   }
 
-  const unsavedCount = posts.filter(p => !saved.has(p.id)).length;
+  const unsavedCount = filteredPosts.filter(p => !saved.has(p.id)).length;
   const isDownloading = progress !== null;
   const viewUrls = viewUrlCache.urls;
+
+  // Filter button counts
+  const othersCount = posts.filter(p => !selfParticipantId || p.participant_id !== selfParticipantId).length;
+  const allUnsavedCount = posts.filter(p => !saved.has(p.id)).length;
+  const othersUnsavedCount = posts.filter(p =>
+    (!selfParticipantId || p.participant_id !== selfParticipantId) && !saved.has(p.id)
+  ).length;
 
   return (
     <div style={outerStyle}>
@@ -293,6 +310,33 @@ export default function GalleryPage() {
       </div>
 
       <div style={bodyStyle}>
+        {/* Filter bar */}
+        {posts.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+            {([
+              ['all', 'すべて', posts.length],
+              ['others', '自分以外', othersCount],
+              ['unsaved', '未保存', allUnsavedCount],
+              ['others_unsaved', '自分以外+未保存', othersUnsavedCount],
+            ] as [FilterType, string, number][]).map(([key, label, count]) => (
+              <button
+                key={key}
+                style={{
+                  ...btnBase,
+                  background: filter === key ? accentColor : '#e8e0d0',
+                  color: filter === key ? '#fff' : '#555',
+                  fontSize: 12,
+                  padding: '8px 12px',
+                  minHeight: 36,
+                }}
+                onClick={() => setFilter(key)}
+              >
+                {label} ({count})
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Action toolbar */}
         {posts.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
@@ -310,9 +354,9 @@ export default function GalleryPage() {
                 選択した写真を保存 ({selected.size})
               </button>
               <button
-                style={posts.length > 0 && !isDownloading ? primaryBtn : disabledBtn}
+                style={filteredPosts.length > 0 && !isDownloading ? primaryBtn : disabledBtn}
                 onClick={handleDownloadAll}
-                disabled={isDownloading}
+                disabled={filteredPosts.length === 0 || isDownloading}
               >
                 すべて保存
               </button>
@@ -352,13 +396,17 @@ export default function GalleryPage() {
             <p style={{ margin: 0 }}>まだ写真がありません</p>
             <p style={{ margin: '8px 0 0', fontSize: 12 }}>写真が投稿されるとここに表示されます</p>
           </div>
+        ) : filteredPosts.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 0', color: '#888', fontSize: 14 }}>
+            <p style={{ margin: 0 }}>このフィルターに該当する写真はありません</p>
+          </div>
         ) : (
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
             gap: 6,
           }}>
-            {posts.map(post => {
+            {filteredPosts.map(post => {
               const url = viewUrls[post.id];
               const isSelected = selected.has(post.id);
               const isSaved = saved.has(post.id);
