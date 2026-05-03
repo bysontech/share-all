@@ -34,6 +34,9 @@ export interface Post {
   upload_status: string;
   uploaded_at: number | null;
   created_at: number;
+  participant_id: string | null;
+  display_file_key: string | null;
+  display_mime_type: string | null;
 }
 
 export const ALLOWED_IMAGE_MIMES = [

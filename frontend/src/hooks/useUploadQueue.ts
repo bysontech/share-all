@@ -14,14 +14,52 @@ export interface QueueItem {
 }
 
 const MAX_CONCURRENT = 3;
+const MAX_DISPLAY_DIM = 2048;
+
+async function generateDisplayWebP(file: File): Promise<{ blob: Blob; mimeType: string } | null> {
+  try {
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      return null; // HEIC or other unsupported format
+    }
+
+    let { width, height } = bitmap;
+    if (width > MAX_DISPLAY_DIM || height > MAX_DISPLAY_DIM) {
+      const scale = MAX_DISPLAY_DIM / Math.max(width, height);
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { bitmap.close(); return null; }
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+
+    return new Promise((resolve) => {
+      canvas.toBlob(
+        (blob) => resolve(blob ? { blob, mimeType: 'image/webp' } : null),
+        'image/webp',
+        0.85
+      );
+    });
+  } catch {
+    return null;
+  }
+}
 
 interface UseUploadQueueOptions {
   roomId: string;
   nickname: string;
+  participantId?: string;
   onPostComplete?: (post: Post) => void;
 }
 
-export function useUploadQueue({ roomId, nickname, onPostComplete }: UseUploadQueueOptions) {
+export function useUploadQueue({ roomId, nickname, participantId, onPostComplete }: UseUploadQueueOptions) {
   const [items, setItems] = useState<QueueItem[]>([]);
   const runningRef = useRef(0);
   const queueRef = useRef<string[]>([]);
@@ -62,18 +100,48 @@ export function useUploadQueue({ roomId, nickname, onPostComplete }: UseUploadQu
 
         await putToR2(uploadUrl, item.file);
 
+        // Try generating and uploading display WebP (non-fatal)
+        let displayFileKey: string | undefined;
+        let displayMimeType: string | undefined;
+        if (postId) {
+          const display = await generateDisplayWebP(item.file);
+          if (display) {
+            try {
+              const displayRes = await api.getUploadUrl(roomId, {
+                nickname,
+                fileName: `${postId}.webp`,
+                mimeType: display.mimeType,
+                fileSize: display.blob.size,
+                uploadType: 'display',
+                postId,
+              });
+              await putToR2(displayRes.uploadUrl, display.blob);
+              displayFileKey = displayRes.fileKey;
+              displayMimeType = display.mimeType;
+            } catch {
+              // non-fatal: display WebP failure does not block the upload
+            }
+          }
+        }
+
         updateItem(id, { status: 'completing' });
-        await api.completeUpload(roomId, postId);
+        await api.completeUpload(roomId, postId!, {
+          participantId,
+          displayFileKey,
+          displayMimeType,
+        });
 
         updateItem(id, { status: 'done' });
         onPostComplete?.({
-          id: postId,
+          id: postId!,
           nickname,
           file_type: 'image',
           file_key: '',
           mime_type: item.file.type,
           created_at: Math.floor(Date.now() / 1000),
           sort_order: null,
+          participant_id: participantId ?? null,
+          display_file_key: displayFileKey ?? null,
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'アップロードに失敗しました';
@@ -86,7 +154,7 @@ export function useUploadQueue({ roomId, nickname, onPostComplete }: UseUploadQu
         drainQueue();
       }
     },
-    [roomId, nickname, onPostComplete, updateItem]
+    [roomId, nickname, participantId, onPostComplete, updateItem]
   );
 
   const drainQueue = useCallback(() => {

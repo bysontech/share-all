@@ -53,6 +53,8 @@ export interface Post {
   mime_type: string;
   created_at: number;
   sort_order: number | null;
+  participant_id: string | null;
+  display_file_key: string | null;
 }
 
 export interface AdminPost {
@@ -119,17 +121,21 @@ export const api = {
 
   getUploadUrl: (
     roomId: string,
-    body: { nickname: string; fileName: string; mimeType: string; fileSize: number }
+    body: { nickname: string; fileName: string; mimeType: string; fileSize: number; uploadType?: 'original' | 'display'; postId?: string }
   ) =>
     request<UploadUrlResponse>(`/rooms/${roomId}/posts/upload-url`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
 
-  completeUpload: (roomId: string, postId: string) =>
+  completeUpload: (
+    roomId: string,
+    postId: string,
+    extra?: { participantId?: string; displayFileKey?: string; displayMimeType?: string }
+  ) =>
     request<{ ok: boolean }>(`/rooms/${roomId}/posts/${postId}/complete`, {
       method: 'POST',
-      body: '{}',
+      body: JSON.stringify(extra ?? {}),
     }),
 
   failUpload: (roomId: string, postId: string) =>
@@ -143,10 +149,10 @@ export const api = {
     return request<PostsResponse>(`/rooms/${roomId}/posts${qs}`);
   },
 
-  getViewUrls: (roomId: string, postIds: string[]) =>
+  getViewUrls: (roomId: string, postIds: string[], preferDisplay?: boolean) =>
     request<ViewUrlsResponse>(`/rooms/${roomId}/posts/view-urls`, {
       method: 'POST',
-      body: JSON.stringify({ postIds }),
+      body: JSON.stringify({ postIds, ...(preferDisplay ? { preferDisplay: true } : {}) }),
     }),
 
   // Theme APIs
@@ -195,11 +201,11 @@ export const api = {
     }),
 };
 
-export async function putToR2(uploadUrl: string, file: File): Promise<void> {
+export async function putToR2(uploadUrl: string, data: File | Blob): Promise<void> {
   const res = await fetch(uploadUrl, {
     method: 'PUT',
-    body: file,
-    headers: { 'Content-Type': file.type },
+    body: data,
+    headers: { 'Content-Type': data.type },
   });
   if (!res.ok) throw new Error(`R2 PUT failed: ${res.status}`);
 }

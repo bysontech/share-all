@@ -6,7 +6,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "migrate:local": "wrangler d1 execute share-all-db --local --file=migrations/0001_init.sql && wrangler d1 execute share-all-db --local --file=migrations/0002_theme_settings.sql"
+    "migrate:local": "wrangler d1 execute share-all-db --local --file=migrations/0001_init.sql && wrangler d1 execute share-all-db --local --file=migrations/0002_theme_settings.sql && wrangler d1 execute share-all-db --local --file=migrations/0003_participant_display.sql"
   },
   "dependencies": {
     "hono": "^4.6.0"
