@@ -433,8 +433,8 @@ export default function GalleryPage() {
                       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     />
                   ) : (
-                    <div style={{ width: '100%', height: '100%', background: '#e0d8c8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <span style={{ fontSize: 11, color: '#999' }}>読込中</span>
+                    <div style={{ width: '100%', height: '100%', background: '#e0d8c8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 4 }}>
+                      <span style={{ fontSize: 11, color: '#666', textAlign: 'center', lineHeight: 1.35 }}>準備中</span>
                     </div>
                   )}
                   {isSelected && (

@@ -77,7 +77,7 @@ export default function SlideshowPage() {
 
     setUrlLoading(true);
     try {
-      const res = await api.getViewUrls(roomId, posts.map((p) => p.id));
+      const res = await api.getViewUrls(roomId, posts.map((p) => p.id), true);
       setViewUrlCache({ urls: res.viewUrls, expiresAt: res.expiresAt });
     } catch (_e) {
       // non-fatal: keep showing existing URLs if any
@@ -228,8 +228,8 @@ export default function SlideshowPage() {
             />
           )
         ) : (
-          <div style={{ color: '#555', fontSize: 14 }}>
-            {urlLoading ? '読み込み中...' : '画像を準備中です'}
+          <div style={{ color: '#888', fontSize: 15, textAlign: 'center', padding: 24 }}>
+            {urlLoading ? '読み込み中...' : '準備中'}
           </div>
         )}
       </div>

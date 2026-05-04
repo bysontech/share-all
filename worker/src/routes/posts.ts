@@ -288,21 +288,41 @@ posts.post('/view-urls', async (c) => {
     return err('UPLOAD_BODY_SIGNING_SECRET is required for local view URL proxy', 501);
   }
 
-  type Row = { id: string; file_key: string; display_file_key: string | null };
+  type Row = { id: string; file_key: string; display_file_key: string | null; mime_type: string };
   const placeholders = body.postIds.map(() => '?').join(',');
   const { results } = await c.env.DB.prepare(
-    `SELECT id, file_key, display_file_key FROM posts
+    `SELECT id, file_key, display_file_key, mime_type FROM posts
      WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'
      AND id IN (${placeholders})`
   )
     .bind(roomId, ...body.postIds)
     .all<Row>();
 
+  const isHeicFamily = (mime: string | null | undefined) => {
+    const m = (mime ?? '').toLowerCase();
+    return m === 'image/heic' || m === 'image/heif';
+  };
+
   const viewUrls: Record<string, string> = {};
   const exp = nowSec() + expirySeconds;
   await Promise.all(
     results.map(async (row) => {
-      const keyToSign = body.preferDisplay && row.display_file_key ? row.display_file_key : row.file_key;
+      let keyToSign: string | null = null;
+      if (body.preferDisplay) {
+        if (row.display_file_key) {
+          keyToSign = row.display_file_key;
+        } else if (isHeicFamily(row.mime_type)) {
+          // ブラウザで描画できない HEIC オリジナルにはフォールバックしない（cycle-11 まで準備中表示）
+          keyToSign = null;
+        } else {
+          keyToSign = row.file_key;
+        }
+      } else {
+        keyToSign = row.file_key;
+      }
+
+      if (!keyToSign) return;
+
       try {
         if (usePresigned) {
           const url = await generatePresignedGetUrl(c.env.STORAGE, keyToSign, expirySeconds);
