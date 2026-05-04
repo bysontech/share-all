@@ -4,6 +4,7 @@ import { ALLOWED_IMAGE_MIMES, ALLOWED_VIDEO_MIMES, MAX_IMAGE_SIZE, MAX_VIDEO_SIZ
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
 import { getRoomAndValidate, getPost, validateHostToken } from '../db';
 import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
+import { uploadToCloudflareImages } from '../cf-images';
 import {
   createUploadBodyToken,
   verifyUploadBodyToken,
@@ -225,6 +226,39 @@ posts.post('/:postId/complete', async (c) => {
       .run();
   }
 
+  // Background: upload HEIC to Cloudflare Images when no client-side display was generated
+  const isHeic = post.mime_type === 'image/heic' || post.mime_type === 'image/heif';
+  if (isHeic && !body.displayFileKey && c.env.CF_ACCOUNT_ID && c.env.CF_IMAGES_API_TOKEN) {
+    const pid = postId;
+    const fk = post.file_key;
+    const mt = post.mime_type;
+    const cfAccountId = c.env.CF_ACCOUNT_ID;
+    const cfApiToken = c.env.CF_IMAGES_API_TOKEN;
+    c.executionCtx.waitUntil((async () => {
+      try {
+        const r2Obj = await c.env.STORAGE.get(fk);
+        if (!r2Obj) { console.warn('[cf-images] R2 object not found', { pid }); return; }
+        const buffer = await r2Obj.arrayBuffer();
+        const filename = fk.split('/').pop() ?? `${pid}.heic`;
+        const result = await uploadToCloudflareImages(cfAccountId, cfApiToken, buffer, mt, filename);
+        if (result) {
+          await c.env.DB.prepare(
+            `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, created_at, provider, external_id, delivery_url)
+             VALUES (?, ?, 'display_image', NULL, 'image/webp', 'ready', ?, 'cloudflare_images', ?, ?)`
+          ).bind(uuid(), pid, nowSec(), result.imageId, result.deliveryUrl).run();
+          console.log('[cf-images] derivative inserted', { pid, imageId: result.imageId });
+        } else {
+          await c.env.DB.prepare(
+            `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, created_at, provider, error_message)
+             VALUES (?, ?, 'display_image', NULL, NULL, 'failed', ?, 'cloudflare_images', ?)`
+          ).bind(uuid(), pid, nowSec(), 'CF Images upload returned null').run();
+        }
+      } catch (e) {
+        console.error('[cf-images] background error', { pid, error: String(e) });
+      }
+    })());
+  }
+
   return c.json({ ok: true });
 });
 
@@ -322,15 +356,16 @@ posts.post('/view-urls', async (c) => {
     .all<PostRow>();
 
   // For preferDisplay: fetch media_derivatives (type=display_image, status=ready)
-  const derivativeMap: Record<string, string> = {};
+  type DerivRow = { post_id: string; file_key: string | null; delivery_url: string | null; provider: string | null };
+  const derivativeMap: Record<string, DerivRow> = {};
   if (body.preferDisplay) {
     const { results: derivRows } = await c.env.DB.prepare(
-      `SELECT post_id, file_key FROM media_derivatives
+      `SELECT post_id, file_key, delivery_url, provider FROM media_derivatives
        WHERE post_id IN (${placeholders}) AND type = 'display_image' AND status = 'ready'`
     )
       .bind(...body.postIds)
-      .all<{ post_id: string; file_key: string }>();
-    derivRows.forEach((r) => { derivativeMap[r.post_id] = r.file_key; });
+      .all<DerivRow>();
+    derivRows.forEach((r) => { derivativeMap[r.post_id] = r; });
   }
 
   const viewUrls: Record<string, string> = {};
@@ -338,33 +373,40 @@ posts.post('/view-urls', async (c) => {
 
   await Promise.all(
     postRows.map(async (row) => {
-      // Determine which key to sign
-      let keyToSign: string | null;
       if (body.preferDisplay) {
-        // Priority: media_derivatives > posts.display_file_key (backward compat) > null
-        keyToSign = derivativeMap[row.id] ?? row.display_file_key ?? null;
-      } else {
-        // Downloads always use the original file
-        keyToSign = row.file_key;
+        const deriv = derivativeMap[row.id];
+        // CF Images provider: return delivery_url directly, no signing needed
+        if (deriv?.provider === 'cloudflare_images' && deriv.delivery_url) {
+          viewUrls[row.id] = deriv.delivery_url;
+          return;
+        }
+        // Priority: derivative file_key > posts.display_file_key (backward compat) > null
+        const keyToSign = deriv?.file_key ?? row.display_file_key ?? null;
+        if (!keyToSign) return; // no display image → omit from response
+        try {
+          if (usePresigned) {
+            viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, keyToSign, expirySeconds);
+          } else {
+            const token = await createViewFileToken(proxySecret!, { postId: row.id, roomId, fileKey: keyToSign, exp });
+            viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+          }
+        } catch (_e) {
+          // skip: URL generation failure for one post should not fail the whole request
+        }
+        return;
       }
-      if (!keyToSign) return; // no display image → omit from response
 
+      // Downloads always use the original file
+      const keyToSign = row.file_key;
       try {
         if (usePresigned) {
-          const url = await generatePresignedGetUrl(c.env.STORAGE, keyToSign, expirySeconds);
-          viewUrls[row.id] = url;
+          viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, keyToSign, expirySeconds);
         } else {
-          const token = await createViewFileToken(proxySecret!, {
-            postId: row.id,
-            roomId,
-            fileKey: keyToSign,
-            exp,
-          });
-          viewUrls[row.id] =
-            `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+          const token = await createViewFileToken(proxySecret!, { postId: row.id, roomId, fileKey: keyToSign, exp });
+          viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
         }
       } catch (_e) {
-        // skip: URL generation failure for one post should not fail the whole request
+        // skip
       }
     })
   );

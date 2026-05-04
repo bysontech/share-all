@@ -9,6 +9,10 @@ export interface Env {
   R2_ACCOUNT_ID?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
+  /** Cloudflare account ID (for Images API) */
+  CF_ACCOUNT_ID?: string;
+  /** Cloudflare Images API token */
+  CF_IMAGES_API_TOKEN?: string;
 }
 
 export interface Room {
