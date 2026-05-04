@@ -26,6 +26,7 @@ export default function SlideshowPage() {
   });
 
   const { posts, error: pollError } = usePostsPolling(roomId);
+  // All image posts (used for URL fetching)
   const imagePosts = posts
     .filter((p) => p.file_type === 'image')
     .sort((a, b) =>
@@ -41,12 +42,17 @@ export default function SlideshowPage() {
   const viewUrlCacheRef = useRef(viewUrlCache);
   viewUrlCacheRef.current = viewUrlCache;
 
+  // Only posts that have a display URL — excludes HEIC without a derivative
+  const displayablePosts = viewUrlCache.expiresAt > 0
+    ? imagePosts.filter((p) => viewUrlCache.urls[p.id])
+    : imagePosts;
+
   const imagePostsRef = useRef<Post[]>([]);
   imagePostsRef.current = imagePosts;
 
   // Reset index when new posts arrive and index is out of bounds
   useEffect(() => {
-    if (currentIndex >= imagePosts.length && imagePosts.length > 0) {
+    if (currentIndex >= displayablePosts.length && displayablePosts.length > 0) {
       setCurrentIndex(0);
     }
   }, [imagePosts.length, currentIndex]);
@@ -96,16 +102,16 @@ export default function SlideshowPage() {
     return () => clearInterval(timer);
   }, [fetchViewUrls]);
 
-  // Slideshow auto-advance
+  // Slideshow auto-advance (based on displayable posts)
   useEffect(() => {
-    if (imagePosts.length <= 1) return;
+    if (displayablePosts.length <= 1) return;
     const timer = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % imagePostsRef.current.length);
+      setCurrentIndex((prev) => (prev + 1) % displayablePosts.length);
     }, settings.intervalSeconds * 1000);
     return () => clearInterval(timer);
-  }, [settings.intervalSeconds, imagePosts.length]);
+  }, [settings.intervalSeconds, displayablePosts.length]);
 
-  const currentPost = imagePosts[currentIndex];
+  const currentPost = displayablePosts[currentIndex];
   const currentUrl = currentPost ? viewUrlCache.urls[currentPost.id] : undefined;
 
   useEffect(() => {
@@ -168,8 +174,8 @@ export default function SlideshowPage() {
           ← 戻る
         </Link>
         <span style={{ fontSize: 13, color: '#aaa' }}>
-          {imagePosts.length > 0
-            ? `${currentIndex + 1} / ${imagePosts.length}`
+          {displayablePosts.length > 0
+            ? `${currentIndex + 1} / ${displayablePosts.length}`
             : ''}
           {pollError && <span style={{ marginLeft: 8, color: '#f88', fontSize: 11 }}>更新エラー</span>}
           {urlLoading && <span style={{ marginLeft: 8, color: '#aaa', fontSize: 11 }}>URL取得中</span>}
@@ -186,9 +192,11 @@ export default function SlideshowPage() {
           padding: '60px 0 40px',
         }}
       >
-        {imagePosts.length === 0 ? (
+        {displayablePosts.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#666' }}>
-            <p style={{ fontSize: 20, marginBottom: 8 }}>まだ写真が投稿されていません</p>
+            <p style={{ fontSize: 20, marginBottom: 8 }}>
+              {urlLoading ? '読み込み中...' : 'まだ表示できる写真がありません'}
+            </p>
             <p style={{ fontSize: 14 }}>写真が投稿されるとここに表示されます</p>
           </div>
         ) : currentUrl ? (
@@ -256,11 +264,11 @@ export default function SlideshowPage() {
       )}
 
       {/* Manual nav */}
-      {imagePosts.length > 1 && (
+      {displayablePosts.length > 1 && (
         <>
           <button
             onClick={() =>
-              setCurrentIndex((prev) => (prev - 1 + imagePosts.length) % imagePosts.length)
+              setCurrentIndex((prev) => (prev - 1 + displayablePosts.length) % displayablePosts.length)
             }
             style={{
               position: 'absolute',
@@ -280,7 +288,7 @@ export default function SlideshowPage() {
           </button>
           <button
             onClick={() =>
-              setCurrentIndex((prev) => (prev + 1) % imagePosts.length)
+              setCurrentIndex((prev) => (prev + 1) % displayablePosts.length)
             }
             style={{
               position: 'absolute',

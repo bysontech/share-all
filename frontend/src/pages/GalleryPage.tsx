@@ -23,14 +23,13 @@ function persistSaved(roomId: string, ids: Set<string>) {
   }
 }
 
-/** SlideshowPage と同じ基準（file_type 優先）。MIME の大小・欠損でも一覧から落ちないようにする */
-function isImagePost(p: Post) {
-  if (p.file_type === 'image') return true;
-  const m = p.mime_type?.toLowerCase() ?? '';
-  return m.startsWith('image/');
-}
+// ---- Helpers ----
 
-// ---- Download filename helpers ----
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${bytes}B`;
+}
 
 function mimeToExt(mime: string): string {
   const map: Record<string, string> = {
@@ -42,6 +41,8 @@ function mimeToExt(mime: string): string {
     'image/heif': 'heif',
     'image/gif': 'gif',
     'image/bmp': 'bmp',
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
   };
   return map[mime.toLowerCase()] ?? 'bin';
 }
@@ -134,10 +135,11 @@ export default function GalleryPage() {
     setLoading(true);
     api.getPosts(roomId)
       .then(r => {
-        const imgs = r.posts.filter(isImagePost);
-        setPosts(imgs);
-        if (imgs.length === 0) { setLoading(false); return; }
-        const ids = imgs.map(p => p.id);
+        setPosts(r.posts);
+        if (r.posts.length === 0) { setLoading(false); return; }
+        const ids = r.posts.map(p => p.id);
+        // preferDisplay=true: use display derivatives for gallery thumbnails
+        // Videos have no derivative so viewUrls will omit them (video card shown instead)
         return api.getViewUrls(roomId, ids, true).then(v =>
           setViewUrlCache({ urls: v.viewUrls, expiresAt: v.expiresAt })
         );
@@ -306,7 +308,7 @@ export default function GalleryPage() {
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 'normal', color: accentColor, flex: 1 }}>
           アルバム
         </h1>
-        <span style={{ fontSize: 12, color: '#888', flexShrink: 0 }}>{posts.length}枚</span>
+        <span style={{ fontSize: 12, color: '#888', flexShrink: 0 }}>{posts.length}件</span>
       </div>
 
       <div style={bodyStyle}>
@@ -393,8 +395,8 @@ export default function GalleryPage() {
         {/* Empty state */}
         {posts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '60px 0', color: '#888', fontSize: 14, lineHeight: 1.8 }}>
-            <p style={{ margin: 0 }}>まだ写真がありません</p>
-            <p style={{ margin: '8px 0 0', fontSize: 12 }}>写真が投稿されるとここに表示されます</p>
+            <p style={{ margin: 0 }}>まだ投稿がありません</p>
+            <p style={{ margin: '8px 0 0', fontSize: 12 }}>写真や動画が投稿されるとここに表示されます</p>
           </div>
         ) : filteredPosts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '40px 0', color: '#888', fontSize: 14 }}>
@@ -432,9 +434,26 @@ export default function GalleryPage() {
                       loading="lazy"
                       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     />
+                  ) : post.file_type === 'video' ? (
+                    <div style={{
+                      width: '100%', height: '100%', background: '#2a2a3a',
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center', gap: 4,
+                    }}>
+                      <span style={{ fontSize: 22, color: '#8899cc' }}>▶</span>
+                      <span style={{ fontSize: 9, color: '#8899cc' }}>動画</span>
+                      {post.file_size > 0 && (
+                        <span style={{ fontSize: 9, color: '#667' }}>{formatFileSize(post.file_size)}</span>
+                      )}
+                    </div>
                   ) : (
-                    <div style={{ width: '100%', height: '100%', background: '#e0d8c8', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 4 }}>
-                      <span style={{ fontSize: 11, color: '#666', textAlign: 'center', lineHeight: 1.35 }}>準備中</span>
+                    <div style={{
+                      width: '100%', height: '100%', background: '#ede8df',
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center', gap: 3, padding: 4,
+                    }}>
+                      <span style={{ fontSize: 14, color: '#bbb' }}>🖼</span>
+                      <span style={{ fontSize: 9, color: '#aaa', textAlign: 'center', lineHeight: 1.3 }}>表示準備中</span>
                     </div>
                   )}
                   {isSelected && (

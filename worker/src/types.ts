@@ -39,6 +39,16 @@ export interface Post {
   display_mime_type: string | null;
 }
 
+export interface MediaDerivative {
+  id: string;
+  post_id: string;
+  type: string;
+  file_key: string | null;
+  mime_type: string | null;
+  status: string;
+  created_at: number;
+}
+
 export const ALLOWED_IMAGE_MIMES = [
   'image/jpeg',
   'image/png',
@@ -46,4 +56,10 @@ export const ALLOWED_IMAGE_MIMES = [
   'image/heic',
 ] as const;
 
-export const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB
+export const ALLOWED_VIDEO_MIMES = [
+  'video/mp4',
+  'video/quicktime',
+] as const;
+
+export const MAX_IMAGE_SIZE = 20 * 1024 * 1024;  // 20MB
+export const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB

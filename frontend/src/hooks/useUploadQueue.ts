@@ -135,9 +135,10 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
         onPostComplete?.({
           id: postId!,
           nickname,
-          file_type: 'image',
+          file_type: item.file.type.startsWith('video/') ? 'video' : 'image',
           file_key: '',
           mime_type: item.file.type,
+          file_size: item.file.size,
           created_at: Math.floor(Date.now() / 1000),
           sort_order: null,
           participant_id: participantId ?? null,

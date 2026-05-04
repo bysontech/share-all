@@ -23,6 +23,8 @@ export function getExtFromMime(mime: string): string {
     'image/png': 'png',
     'image/webp': 'webp',
     'image/heic': 'heic',
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
   };
   return map[mime] ?? 'bin';
 }
