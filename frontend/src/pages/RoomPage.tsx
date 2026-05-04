@@ -84,9 +84,14 @@ export default function RoomPage() {
     setNickname(n);
   }
 
+  const ALLOWED_UPLOAD_TYPES = [
+    'image/jpeg', 'image/png', 'image/webp', 'image/heic',
+    'video/mp4', 'video/quicktime',
+  ];
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(e.target.files ?? []).filter(f =>
-      ['image/jpeg', 'image/png', 'image/webp', 'image/heic'].includes(f.type)
+      ALLOWED_UPLOAD_TYPES.includes(f.type)
     );
     if (selected.length) addFiles(selected);
     e.target.value = '';
@@ -261,7 +266,7 @@ export default function RoomPage() {
 
           <label style={{ ...primaryBtnStyle, background: accentColor, display: 'inline-block', marginBottom: 12 }}>
             写真を選択
-            <input type="file" accept="image/jpeg,image/png,image/webp,image/heic" multiple
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,video/mp4,video/quicktime" multiple
               onChange={handleFileChange} style={{ display: 'none' }} />
           </label>
 

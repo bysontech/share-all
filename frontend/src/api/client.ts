@@ -51,6 +51,7 @@ export interface Post {
   file_type: string;
   file_key: string;
   mime_type: string;
+  file_size: number;
   created_at: number;
   sort_order: number | null;
   participant_id: string | null;

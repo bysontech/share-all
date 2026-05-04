@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
-import { ALLOWED_IMAGE_MIMES, MAX_IMAGE_SIZE } from '../types';
+import { ALLOWED_IMAGE_MIMES, ALLOWED_VIDEO_MIMES, MAX_IMAGE_SIZE, MAX_VIDEO_SIZE } from '../types';
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
 import { getRoomAndValidate, getPost, validateHostToken } from '../db';
 import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
@@ -66,22 +66,26 @@ posts.post('/upload-url', async (c) => {
     return c.json({ uploadUrl, fileKey, postId: body.postId }, 200);
   }
 
-  // Original upload
+  // Original upload (image or video)
   if (!body.nickname || body.nickname.trim() === '') return err('nickname is required');
-  if (!(ALLOWED_IMAGE_MIMES as readonly string[]).includes(body.mimeType)) {
-    return err(`mimeType not allowed: ${body.mimeType}`);
-  }
-  if (body.fileSize > MAX_IMAGE_SIZE) return err('File too large (max 20MB)');
 
+  const isVideo = (ALLOWED_VIDEO_MIMES as readonly string[]).includes(body.mimeType);
+  const isImage = (ALLOWED_IMAGE_MIMES as readonly string[]).includes(body.mimeType);
+  if (!isImage && !isVideo) return err(`mimeType not allowed: ${body.mimeType}`);
+
+  const maxSize = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
+  if (body.fileSize > maxSize) return err(`File too large (max ${maxSize / 1024 / 1024}MB)`);
+
+  const fileType = isVideo ? 'video' : 'image';
   const postId = uuid();
   const ext = getExtFromMime(body.mimeType);
   const fileKey = `${roomId}/images/${postId}.${ext}`;
 
   await c.env.DB.prepare(
     `INSERT INTO posts (id, room_id, nickname, file_key, file_type, mime_type, file_size, status, upload_status, created_at)
-     VALUES (?, ?, ?, ?, 'image', ?, ?, 'visible', 'pending', ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'visible', 'pending', ?)`
   )
-    .bind(postId, roomId, body.nickname.trim(), fileKey, body.mimeType, body.fileSize, now)
+    .bind(postId, roomId, body.nickname.trim(), fileKey, fileType, body.mimeType, body.fileSize, now)
     .run();
 
   let uploadUrl: string;
@@ -136,8 +140,9 @@ posts.put('/:postId/upload-body', async (c) => {
   const contentLength = c.req.header('Content-Length');
   if (contentLength) {
     const n = parseInt(contentLength, 10);
-    if (!Number.isFinite(n) || n > MAX_IMAGE_SIZE) {
-      return err('File too large (max 20MB)', 413);
+    const limit = post.file_type === 'video' ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
+    if (!Number.isFinite(n) || n > limit) {
+      return err(`File too large (max ${limit / 1024 / 1024}MB)`, 413);
     }
   }
 
@@ -202,11 +207,23 @@ posts.post('/:postId/complete', async (c) => {
   try { body = await c.req.json<CompleteBody>(); } catch { /* empty body ok */ }
 
   const now = nowSec();
+
+  // Update post: mark as uploaded, save participant and display key (backward compat)
   await c.env.DB.prepare(
     "UPDATE posts SET upload_status = 'uploaded', uploaded_at = ?, participant_id = ?, display_file_key = ?, display_mime_type = ? WHERE id = ?"
   )
     .bind(now, body.participantId ?? null, body.displayFileKey ?? null, body.displayMimeType ?? null, postId)
     .run();
+
+  // Insert media_derivative for display image if one was generated
+  if (body.displayFileKey) {
+    await c.env.DB.prepare(
+      `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, created_at)
+       VALUES (?, ?, 'display_image', ?, ?, 'ready', ?)`
+    )
+      .bind(uuid(), postId, body.displayFileKey, body.displayMimeType ?? 'image/webp', now)
+      .run();
+  }
 
   return c.json({ ok: true });
 });
@@ -235,13 +252,17 @@ posts.get('/', async (c) => {
   const since = c.req.query('since');
   const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 100);
 
-  type Row = { id: string; nickname: string; file_type: string; file_key: string; mime_type: string; created_at: number; sort_order: number | null; participant_id: string | null; display_file_key: string | null };
+  type Row = {
+    id: string; nickname: string; file_type: string; file_key: string;
+    mime_type: string; file_size: number; created_at: number; sort_order: number | null;
+    participant_id: string | null; display_file_key: string | null;
+  };
 
   let results: Row[];
 
   if (since) {
     const { results: rows } = await c.env.DB.prepare(
-      `SELECT id, nickname, file_type, file_key, mime_type, created_at, sort_order, participant_id, display_file_key
+      `SELECT id, nickname, file_type, file_key, mime_type, file_size, created_at, sort_order, participant_id, display_file_key
        FROM posts
        WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible' AND created_at > ?
        ORDER BY created_at ASC
@@ -252,7 +273,7 @@ posts.get('/', async (c) => {
     results = rows;
   } else {
     const { results: rows } = await c.env.DB.prepare(
-      `SELECT id, nickname, file_type, file_key, mime_type, created_at, sort_order, participant_id, display_file_key
+      `SELECT id, nickname, file_type, file_key, mime_type, file_size, created_at, sort_order, participant_id, display_file_key
        FROM posts
        WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'
        ORDER BY created_at ASC
@@ -288,40 +309,45 @@ posts.post('/view-urls', async (c) => {
     return err('UPLOAD_BODY_SIGNING_SECRET is required for local view URL proxy', 501);
   }
 
-  type Row = { id: string; file_key: string; display_file_key: string | null; mime_type: string };
   const placeholders = body.postIds.map(() => '?').join(',');
-  const { results } = await c.env.DB.prepare(
-    `SELECT id, file_key, display_file_key, mime_type FROM posts
+
+  // Fetch post file keys
+  type PostRow = { id: string; file_key: string; display_file_key: string | null };
+  const { results: postRows } = await c.env.DB.prepare(
+    `SELECT id, file_key, display_file_key FROM posts
      WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'
      AND id IN (${placeholders})`
   )
     .bind(roomId, ...body.postIds)
-    .all<Row>();
+    .all<PostRow>();
 
-  const isHeicFamily = (mime: string | null | undefined) => {
-    const m = (mime ?? '').toLowerCase();
-    return m === 'image/heic' || m === 'image/heif';
-  };
+  // For preferDisplay: fetch media_derivatives (type=display_image, status=ready)
+  const derivativeMap: Record<string, string> = {};
+  if (body.preferDisplay) {
+    const { results: derivRows } = await c.env.DB.prepare(
+      `SELECT post_id, file_key FROM media_derivatives
+       WHERE post_id IN (${placeholders}) AND type = 'display_image' AND status = 'ready'`
+    )
+      .bind(...body.postIds)
+      .all<{ post_id: string; file_key: string }>();
+    derivRows.forEach((r) => { derivativeMap[r.post_id] = r.file_key; });
+  }
 
   const viewUrls: Record<string, string> = {};
   const exp = nowSec() + expirySeconds;
+
   await Promise.all(
-    results.map(async (row) => {
-      let keyToSign: string | null = null;
+    postRows.map(async (row) => {
+      // Determine which key to sign
+      let keyToSign: string | null;
       if (body.preferDisplay) {
-        if (row.display_file_key) {
-          keyToSign = row.display_file_key;
-        } else if (isHeicFamily(row.mime_type)) {
-          // ブラウザで描画できない HEIC オリジナルにはフォールバックしない（cycle-11 まで準備中表示）
-          keyToSign = null;
-        } else {
-          keyToSign = row.file_key;
-        }
+        // Priority: media_derivatives > posts.display_file_key (backward compat) > null
+        keyToSign = derivativeMap[row.id] ?? row.display_file_key ?? null;
       } else {
+        // Downloads always use the original file
         keyToSign = row.file_key;
       }
-
-      if (!keyToSign) return;
+      if (!keyToSign) return; // no display image → omit from response
 
       try {
         if (usePresigned) {
@@ -343,8 +369,7 @@ posts.post('/view-urls', async (c) => {
     })
   );
 
-  const expiresAt = exp;
-  return c.json({ viewUrls, expiresAt });
+  return c.json({ viewUrls, expiresAt: exp });
 });
 
 // ---- Admin endpoints (X-Host-Token required) ----
@@ -426,6 +451,18 @@ posts.delete('/:postId', async (c) => {
     return err('Failed to delete file from storage', 500);
   }
 
+  // Also delete associated media_derivatives from R2
+  const { results: derivatives } = await c.env.DB.prepare(
+    "SELECT file_key FROM media_derivatives WHERE post_id = ? AND file_key IS NOT NULL"
+  )
+    .bind(postId)
+    .all<{ file_key: string }>();
+
+  await Promise.allSettled(
+    derivatives.map((d) => c.env.STORAGE.delete(d.file_key))
+  );
+
+  await c.env.DB.prepare('DELETE FROM media_derivatives WHERE post_id = ?').bind(postId).run();
   await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
 
   return c.json({ ok: true });
@@ -453,9 +490,13 @@ posts.get('/:postId/view-file', async (c) => {
   if (post.upload_status !== 'uploaded' || post.status !== 'visible') {
     return err('Post not found', 404);
   }
-  if (post.file_key !== payload.fileKey && post.display_file_key !== payload.fileKey) {
-    return err('Token does not match post', 403);
-  }
+
+  // Accept original, legacy display_file_key, or any derivative key in this room for this post
+  const keyIsValid =
+    post.file_key === payload.fileKey ||
+    (post.display_file_key !== null && post.display_file_key === payload.fileKey) ||
+    (payload.fileKey.startsWith(`${roomId}/`) && payload.fileKey.includes(`/${postId}.`));
+  if (!keyIsValid) return err('Token does not match post', 403);
 
   const obj = await c.env.STORAGE.get(payload.fileKey);
   if (!obj) return err('Object not found', 404);
