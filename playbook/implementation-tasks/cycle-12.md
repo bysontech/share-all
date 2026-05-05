@@ -18,18 +18,17 @@
 
 ---
 
-## 2. 環境変数追加
+## 2. 環境変数
 
-必要に応じて以下を追加する。
+**Image Transformations（/cdn-cgi/image）用（No cost / 自前ストレージ）**
 
-- CF_ACCOUNT_ID
-- CF_IMAGES_API_TOKEN
-- CF_IMAGES_DELIVERY_BASE_URL
-- CF_IMAGES_VARIANT または変換パラメータ
+- `IMAGE_TRANSFORMATIONS_ORIGIN` — デプロイした Worker の公開オリジン（例: `https://api.example.com`）。同一ゾーンで Transformations が効くホスト。未設定時はローカル同様、HEIC は表示 URL を返さずプレースホルダ。
 
-注意：
-- secretはコードに直書きしない
-- wrangler secretを使う
+**使わないもの（Images Storage / Upload API は使用しない）**
+
+- ~~CF_ACCOUNT_ID~~ / ~~CF_IMAGES_API_TOKEN~~ … 削除済み
+
+注意：secret は wrangler secret / ダッシュボードで管理し、リポジトリに直書きしない。
 
 ---
 

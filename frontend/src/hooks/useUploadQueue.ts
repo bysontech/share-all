@@ -100,10 +100,14 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
 
         await putToR2(uploadUrl, item.file);
 
-        // Try generating and uploading display WebP (non-fatal)
+        // HEIC/HEIF: display is handled server-side via Image Transformations (cycle-12); do not store WebP in R2
+        const isHeicUpload =
+          item.file.type === 'image/heic' || item.file.type === 'image/heif';
+
+        // Try generating and uploading display WebP (non-fatal; skipped for HEIC)
         let displayFileKey: string | undefined;
         let displayMimeType: string | undefined;
-        if (postId) {
+        if (postId && !isHeicUpload) {
           const display = await generateDisplayWebP(item.file);
           if (display) {
             try {

@@ -4,7 +4,7 @@ import { ALLOWED_IMAGE_MIMES, ALLOWED_VIDEO_MIMES, MAX_IMAGE_SIZE, MAX_VIDEO_SIZ
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
 import { getRoomAndValidate, getPost, validateHostToken } from '../db';
 import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
-import { uploadToCloudflareImages } from '../cf-images';
+import { buildCdnCgiImageUrl } from '../image-transformations';
 import {
   createUploadBodyToken,
   verifyUploadBodyToken,
@@ -14,6 +14,11 @@ import {
 
 type ParamRoomId = { roomId: string };
 type ParamPost = { roomId: string; postId: string };
+
+function isHeicFamilyMime(mime: string | null | undefined): boolean {
+  const m = (mime ?? '').toLowerCase();
+  return m === 'image/heic' || m === 'image/heif';
+}
 
 const posts = new Hono<{ Bindings: Env }>();
 
@@ -226,39 +231,6 @@ posts.post('/:postId/complete', async (c) => {
       .run();
   }
 
-  // Background: upload HEIC to Cloudflare Images when no client-side display was generated
-  const isHeic = post.mime_type === 'image/heic' || post.mime_type === 'image/heif';
-  if (isHeic && !body.displayFileKey && c.env.CF_ACCOUNT_ID && c.env.CF_IMAGES_API_TOKEN) {
-    const pid = postId;
-    const fk = post.file_key;
-    const mt = post.mime_type;
-    const cfAccountId = c.env.CF_ACCOUNT_ID;
-    const cfApiToken = c.env.CF_IMAGES_API_TOKEN;
-    c.executionCtx.waitUntil((async () => {
-      try {
-        const r2Obj = await c.env.STORAGE.get(fk);
-        if (!r2Obj) { console.warn('[cf-images] R2 object not found', { pid }); return; }
-        const buffer = await r2Obj.arrayBuffer();
-        const filename = fk.split('/').pop() ?? `${pid}.heic`;
-        const result = await uploadToCloudflareImages(cfAccountId, cfApiToken, buffer, mt, filename);
-        if (result) {
-          await c.env.DB.prepare(
-            `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, created_at, provider, external_id, delivery_url)
-             VALUES (?, ?, 'display_image', NULL, 'image/webp', 'ready', ?, 'cloudflare_images', ?, ?)`
-          ).bind(uuid(), pid, nowSec(), result.imageId, result.deliveryUrl).run();
-          console.log('[cf-images] derivative inserted', { pid, imageId: result.imageId });
-        } else {
-          await c.env.DB.prepare(
-            `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, created_at, provider, error_message)
-             VALUES (?, ?, 'display_image', NULL, NULL, 'failed', ?, 'cloudflare_images', ?)`
-          ).bind(uuid(), pid, nowSec(), 'CF Images upload returned null').run();
-        }
-      } catch (e) {
-        console.error('[cf-images] background error', { pid, error: String(e) });
-      }
-    })());
-  }
-
   return c.json({ ok: true });
 });
 
@@ -345,23 +317,23 @@ posts.post('/view-urls', async (c) => {
 
   const placeholders = body.postIds.map(() => '?').join(',');
 
-  // Fetch post file keys
-  type PostRow = { id: string; file_key: string; display_file_key: string | null };
+  // Fetch post file keys + mime (HEIC handling for display)
+  type PostRow = { id: string; file_key: string; display_file_key: string | null; mime_type: string };
   const { results: postRows } = await c.env.DB.prepare(
-    `SELECT id, file_key, display_file_key FROM posts
+    `SELECT id, file_key, display_file_key, mime_type FROM posts
      WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'
      AND id IN (${placeholders})`
   )
     .bind(roomId, ...body.postIds)
     .all<PostRow>();
 
-  // For preferDisplay: fetch media_derivatives (type=display_image, status=ready)
-  type DerivRow = { post_id: string; file_key: string | null; delivery_url: string | null; provider: string | null };
+  // preferDisplay: R2-backed display assets from media_derivatives (e.g. client WebP)
+  type DerivRow = { post_id: string; file_key: string | null };
   const derivativeMap: Record<string, DerivRow> = {};
   if (body.preferDisplay) {
     const { results: derivRows } = await c.env.DB.prepare(
-      `SELECT post_id, file_key, delivery_url, provider FROM media_derivatives
-       WHERE post_id IN (${placeholders}) AND type = 'display_image' AND status = 'ready'`
+      `SELECT post_id, file_key FROM media_derivatives
+       WHERE post_id IN (${placeholders}) AND type = 'display_image' AND status = 'ready' AND file_key IS NOT NULL`
     )
       .bind(...body.postIds)
       .all<DerivRow>();
@@ -370,43 +342,92 @@ posts.post('/view-urls', async (c) => {
 
   const viewUrls: Record<string, string> = {};
   const exp = nowSec() + expirySeconds;
+  const transformOrigin = c.env.IMAGE_TRANSFORMATIONS_ORIGIN?.trim();
 
   await Promise.all(
     postRows.map(async (row) => {
       if (body.preferDisplay) {
         const deriv = derivativeMap[row.id];
-        // CF Images provider: return delivery_url directly, no signing needed
-        if (deriv?.provider === 'cloudflare_images' && deriv.delivery_url) {
-          viewUrls[row.id] = deriv.delivery_url;
+        const displayKey = deriv?.file_key ?? row.display_file_key ?? null;
+
+        if (displayKey) {
+          try {
+            if (usePresigned) {
+              viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, displayKey, expirySeconds);
+            } else {
+              const token = await createViewFileToken(proxySecret!, {
+                postId: row.id,
+                roomId,
+                fileKey: displayKey,
+                exp,
+              });
+              viewUrls[row.id] =
+                `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+            }
+          } catch (_e) {
+            /* skip */
+          }
           return;
         }
-        // Priority: derivative file_key > posts.display_file_key (backward compat) > null
-        const keyToSign = deriv?.file_key ?? row.display_file_key ?? null;
-        if (!keyToSign) return; // no display image → omit from response
+
+        // HEIC/HEIF without separate display: Image Transformations wrapping Worker view-file (no Images Upload API)
+        if (isHeicFamilyMime(row.mime_type)) {
+          if (transformOrigin && proxySecret) {
+            try {
+              const token = await createViewFileToken(proxySecret, {
+                postId: row.id,
+                roomId,
+                fileKey: row.file_key,
+                exp,
+              });
+              const base = transformOrigin.replace(/\/$/, '');
+              const innerAbsolute =
+                `${base}/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+              viewUrls[row.id] = buildCdnCgiImageUrl(transformOrigin, innerAbsolute);
+            } catch (_e) {
+              /* skip */
+            }
+          }
+          return;
+        }
+
+        // Other images: sign original (JPEG/PNG/WebP in R2)
         try {
           if (usePresigned) {
-            viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, keyToSign, expirySeconds);
+            viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
           } else {
-            const token = await createViewFileToken(proxySecret!, { postId: row.id, roomId, fileKey: keyToSign, exp });
-            viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+            const token = await createViewFileToken(proxySecret!, {
+              postId: row.id,
+              roomId,
+              fileKey: row.file_key,
+              exp,
+            });
+            viewUrls[row.id] =
+              `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
           }
         } catch (_e) {
-          // skip: URL generation failure for one post should not fail the whole request
+          /* skip */
         }
         return;
       }
 
-      // Downloads always use the original file
+      // Downloads: always original file (same as before)
       const keyToSign = row.file_key;
       try {
         if (usePresigned) {
           viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, keyToSign, expirySeconds);
         } else {
-          const token = await createViewFileToken(proxySecret!, { postId: row.id, roomId, fileKey: keyToSign, exp });
-          viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+          const token = await createViewFileToken(proxySecret!, {
+            postId: row.id,
+            roomId,
+            fileKey: keyToSign,
+            exp,
+          });
+          viewUrls[row.id] =
+            `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
         }
       } catch (_e) {
-        // skip
+        /* skip */
       }
     })
   );

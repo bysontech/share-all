@@ -9,10 +9,11 @@ export interface Env {
   R2_ACCOUNT_ID?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
-  /** Cloudflare account ID (for Images API) */
-  CF_ACCOUNT_ID?: string;
-  /** Cloudflare Images API token */
-  CF_IMAGES_API_TOKEN?: string;
+  /**
+   * Public origin of this Worker (same zone as Image Transformations), e.g. https://api.example.com
+   * When set, HEIC/HEIF display uses /cdn-cgi/image/... wrapping view-file URLs (no Images Upload API).
+   */
+  IMAGE_TRANSFORMATIONS_ORIGIN?: string;
 }
 
 export interface Room {
