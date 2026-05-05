@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://share-photo-api.bysontech.jp',
+      '/api': 'https://share-photo-api.bysontech.jp',
     },
   },
 });
