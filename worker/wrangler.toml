@@ -1,22 +1,22 @@
-name = "share-all-api"
+name = "share-photo-api"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "share-all-db"
-database_id = "local"
+database_name = "share-photo-db"
+database_id = "a9508efb-3f8d-47e3-a158-b3d683bd228b"
 
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "share-all-bucket"
+bucket_name = "share-photo-bucket"
 
 [vars]
 SIGNED_URL_EXPIRY_UPLOAD = "900"
 SIGNED_URL_EXPIRY_VIEW = "3600"
-FRONTEND_URL = "http://localhost:5173"
+FRONTEND_URL = "http://share-photo.bysontech.jp"
 UPLOAD_BODY_SIGNING_SECRET = "local-dev-only-change-in-production"
-# IMAGE_TRANSFORMATIONS_ORIGIN = "https://share-photo.bysontech.jp"  # optional: prod zone for /cdn-cgi/image on HEIC
+# IMAGE_TRANSFORMATIONS_ORIGIN = "https://share-photo-api.bysontech.jp"  # optional: prod zone for /cdn-cgi/image on HEIC
 
 [dev]
 port = 8787
