@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, type Post } from '../api/client';
+import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 import { getParticipantId } from '../utils/participantId';
 
 const SAVED_KEY = (roomId: string) => `room:${roomId}:savedPostIds`;
@@ -194,7 +194,7 @@ export default function GalleryPage() {
         continue;
       }
       try {
-        const res = await fetch(url);
+        const res = await fetch(resolvePublicMediaUrl(url));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
         const filename = buildDownloadFilename(post);
@@ -429,7 +429,7 @@ export default function GalleryPage() {
                 >
                   {url ? (
                     <img
-                      src={url}
+                      src={resolvePublicMediaUrl(url)}
                       alt=""
                       loading="lazy"
                       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}

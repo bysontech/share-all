@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, ApiError, type RoomInfo, type ThemeSettings } from '../api/client';
+import { api, ApiError, resolvePublicMediaUrl, type RoomInfo, type ThemeSettings } from '../api/client';
 import { useUploadQueue } from '../hooks/useUploadQueue';
 import type { QueueItem } from '../hooks/useUploadQueue';
 import { getOrCreateParticipantId } from '../utils/participantId';
@@ -98,8 +98,8 @@ export default function RoomPage() {
   }
 
   const accentColor = theme.themeColor ?? '#b8860b';
-  const bgUrl = viewUrls['background'];
-  const mainVisualUrl = viewUrls['mainVisual'];
+  const bgUrl = resolvePublicMediaUrl(viewUrls['background']);
+  const mainVisualUrl = resolvePublicMediaUrl(viewUrls['mainVisual']);
 
   const outerStyle: React.CSSProperties = {
     minHeight: '100vh',

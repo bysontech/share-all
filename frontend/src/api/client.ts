@@ -1,7 +1,24 @@
-const BASE = '/api';
+function getApiOrigin(): string {
+  return import.meta.env.VITE_API_BASE?.trim().replace(/\/$/, '') ?? '';
+}
+
+/** JSON API 用プレフィックス（例: /api または https://host/api） */
+const API_PREFIX = getApiOrigin() ? `${getApiOrigin()}/api` : '/api';
+
+/**
+ * 表示・ダウンロード用。API が返す絶対 URL（R2 署名・Transformations）はそのまま。
+ * `/api/...` のサイト相対パスで、別オリジン API のときは VITE_API_BASE を前置する。
+ */
+export function resolvePublicMediaUrl(url: string | undefined | null): string {
+  if (url == null || url === '') return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  const origin = getApiOrigin();
+  if (url.startsWith('/') && origin) return `${origin}${url}`;
+  return url;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${API_PREFIX}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     ...init,
   });

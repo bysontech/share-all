@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, ApiError, type Post, type SlideshowSettings } from '../api/client';
+import { api, ApiError, resolvePublicMediaUrl, type Post, type SlideshowSettings } from '../api/client';
 import { usePostsPolling } from '../hooks/usePostsPolling';
 
 const VIEW_URL_REFRESH_BEFORE_EXPIRY = 120; // 有効期限の2分前に再取得
@@ -224,7 +224,7 @@ export default function SlideshowPage() {
           ) : (
             <img
               key={`${currentPost?.id}-${currentUrl}`}
-              src={currentUrl}
+              src={resolvePublicMediaUrl(currentUrl)}
               alt={currentPost?.nickname}
               onError={() => setImageLoadError(true)}
               style={{
