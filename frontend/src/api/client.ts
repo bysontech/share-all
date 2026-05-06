@@ -220,7 +220,8 @@ export const api = {
 };
 
 export async function putToR2(uploadUrl: string, data: File | Blob): Promise<void> {
-  const res = await fetch(uploadUrl, {
+  // Worker は proxy モードで /api/... の相対 URL を返す。別オリジン時は VITE_API_BASE 前置が必要
+  const res = await fetch(resolvePublicMediaUrl(uploadUrl), {
     method: 'PUT',
     body: data,
     headers: { 'Content-Type': data.type },
