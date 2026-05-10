@@ -14,8 +14,12 @@ export interface QueueItem {
 }
 
 const MAX_CONCURRENT = 3;
+const MAX_VIDEO_CONCURRENT = 1;
 const MAX_DISPLAY_DIM = 2048;
+const VIDEO_THUMB_DIM = 480;
+const VIDEO_THUMB_TIMEOUT_MS = 15_000;
 
+// ── Canvas-based display WebP for images ──
 async function generateDisplayWebP(file: File): Promise<{ blob: Blob; mimeType: string } | null> {
   try {
     let bitmap: ImageBitmap;
@@ -52,6 +56,70 @@ async function generateDisplayWebP(file: File): Promise<{ blob: Blob; mimeType: 
   }
 }
 
+// ── Video thumbnail via video element + canvas ──
+function generateVideoThumbnail(file: File): Promise<{ blob: Blob; mimeType: string } | null> {
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+
+    let settled = false;
+    function finish(result: { blob: Blob; mimeType: string } | null) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      URL.revokeObjectURL(objectUrl);
+      video.src = '';
+      resolve(result);
+    }
+
+    const timer = setTimeout(() => finish(null), VIDEO_THUMB_TIMEOUT_MS);
+
+    video.addEventListener('error', () => finish(null));
+
+    video.addEventListener('loadedmetadata', () => {
+      // seek to 1 s, or 10 % of duration if shorter
+      const seekTo = video.duration > 0 ? Math.min(1, video.duration * 0.1) : 0;
+      video.currentTime = seekTo;
+    });
+
+    video.addEventListener('seeked', () => {
+      try {
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        if (!vw || !vh) { finish(null); return; }
+
+        let w = vw;
+        let h = vh;
+        if (w > VIDEO_THUMB_DIM || h > VIDEO_THUMB_DIM) {
+          const scale = VIDEO_THUMB_DIM / Math.max(w, h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { finish(null); return; }
+        ctx.drawImage(video, 0, 0, w, h);
+
+        canvas.toBlob(
+          (blob) => finish(blob ? { blob, mimeType: 'image/webp' } : null),
+          'image/webp',
+          0.8
+        );
+      } catch {
+        finish(null);
+      }
+    });
+
+    video.src = objectUrl;
+  });
+}
+
 interface UseUploadQueueOptions {
   roomId: string;
   nickname: string;
@@ -62,6 +130,7 @@ interface UseUploadQueueOptions {
 export function useUploadQueue({ roomId, nickname, participantId, onPostComplete }: UseUploadQueueOptions) {
   const [items, setItems] = useState<QueueItem[]>([]);
   const runningRef = useRef(0);
+  const runningVideosRef = useRef(0);
   const queueRef = useRef<string[]>([]);
   const itemsRef = useRef<Map<string, QueueItem>>(new Map());
 
@@ -74,12 +143,17 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
     });
   }, []);
 
+  // drainQueue is declared via ref so processItem can call it without a closure cycle
+  const drainQueueRef = useRef<() => void>(() => {});
+
   const processItem = useCallback(
     async (id: string) => {
       const item = itemsRef.current.get(id);
       if (!item || item.status !== 'pending') return;
 
+      const isVideo = item.file.type.startsWith('video/');
       runningRef.current += 1;
+      if (isVideo) runningVideosRef.current += 1;
       updateItem(id, { status: 'uploading' });
 
       let postId = item.postId;
@@ -100,14 +174,13 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
 
         await putToR2(uploadUrl, item.file);
 
-        // HEIC/HEIF: display is handled server-side via Image Transformations (cycle-12); do not store WebP in R2
-        const isHeicUpload =
-          item.file.type === 'image/heic' || item.file.type === 'image/heif';
+        // HEIC/HEIF: display is handled server-side via Image Transformations
+        const isHeicUpload = item.file.type === 'image/heic' || item.file.type === 'image/heif';
 
-        // Try generating and uploading display WebP (non-fatal; skipped for HEIC)
+        // Display WebP for non-HEIC images
         let displayFileKey: string | undefined;
         let displayMimeType: string | undefined;
-        if (postId && !isHeicUpload) {
+        if (postId && !isHeicUpload && !isVideo) {
           const display = await generateDisplayWebP(item.file);
           if (display) {
             try {
@@ -128,18 +201,44 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
           }
         }
 
+        // Video thumbnail generation
+        let thumbnailFileKey: string | undefined;
+        let thumbnailMimeType: string | undefined;
+        if (postId && isVideo) {
+          try {
+            const thumb = await generateVideoThumbnail(item.file);
+            if (thumb) {
+              const thumbRes = await api.getUploadUrl(roomId, {
+                nickname,
+                fileName: `${postId}.webp`,
+                mimeType: thumb.mimeType,
+                fileSize: thumb.blob.size,
+                uploadType: 'thumbnail',
+                postId,
+              });
+              await putToR2(thumbRes.uploadUrl, thumb.blob);
+              thumbnailFileKey = thumbRes.fileKey;
+              thumbnailMimeType = thumb.mimeType;
+            }
+          } catch {
+            // non-fatal: thumbnail failure does not block the upload
+          }
+        }
+
         updateItem(id, { status: 'completing' });
         await api.completeUpload(roomId, postId!, {
           participantId,
           displayFileKey,
           displayMimeType,
+          thumbnailFileKey,
+          thumbnailMimeType,
         });
 
         updateItem(id, { status: 'done' });
         onPostComplete?.({
           id: postId!,
           nickname,
-          file_type: item.file.type.startsWith('video/') ? 'video' : 'image',
+          file_type: isVideo ? 'video' : 'image',
           file_key: '',
           mime_type: item.file.type,
           file_size: item.file.size,
@@ -156,18 +255,35 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
         }
       } finally {
         runningRef.current -= 1;
-        drainQueue();
+        if (isVideo) runningVideosRef.current -= 1;
+        drainQueueRef.current();
       }
     },
     [roomId, nickname, participantId, onPostComplete, updateItem]
   );
 
   const drainQueue = useCallback(() => {
-    while (runningRef.current < MAX_CONCURRENT && queueRef.current.length > 0) {
-      const nextId = queueRef.current.shift()!;
+    // Scan the queue in order; skip a video item if the video slot is full
+    let i = 0;
+    while (runningRef.current < MAX_CONCURRENT && i < queueRef.current.length) {
+      const nextId = queueRef.current[i];
+      const item = itemsRef.current.get(nextId);
+      const isVideoItem = item?.file.type.startsWith('video/') ?? false;
+
+      if (isVideoItem && runningVideosRef.current >= MAX_VIDEO_CONCURRENT) {
+        // Video slot full; look past this item for a non-video item
+        i++;
+        continue;
+      }
+
+      queueRef.current.splice(i, 1);
       processItem(nextId);
+      // don't increment i — item was removed
     }
   }, [processItem]);
+
+  // Keep the ref in sync so processItem's finally block can call the latest drainQueue
+  drainQueueRef.current = drainQueue;
 
   const addFiles = useCallback(
     (files: File[]) => {
@@ -177,8 +293,7 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
         status: 'pending',
       }));
 
-      // itemsRef は setItems の updater より先に同期する。遅れると drainQueue → processItem が
-      // itemsRef にアイテムを見つけられず return し、キューからは既に shift 済みで永久に待機中のままになる。
+      // itemsRef must be updated before drainQueue so processItem can find the items
       newItems.forEach((it) => itemsRef.current.set(it.id, it));
       setItems((prev) => [...prev, ...newItems]);
 
