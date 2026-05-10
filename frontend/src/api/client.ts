@@ -167,10 +167,18 @@ export const api = {
     return request<PostsResponse>(`/rooms/${roomId}/posts${qs}`);
   },
 
-  getViewUrls: (roomId: string, postIds: string[], preferDisplay?: boolean) =>
+  getViewUrls: (
+    roomId: string,
+    postIds: string[],
+    preferDisplay?: boolean,
+    purpose?: 'display' | 'slideshow' | 'thumbnail'
+  ) =>
     request<ViewUrlsResponse>(`/rooms/${roomId}/posts/view-urls`, {
       method: 'POST',
-      body: JSON.stringify({ postIds, ...(preferDisplay ? { preferDisplay: true } : {}) }),
+      body: JSON.stringify({
+        postIds,
+        ...(purpose ? { purpose } : preferDisplay ? { preferDisplay: true } : {}),
+      }),
     }),
 
   // Theme APIs

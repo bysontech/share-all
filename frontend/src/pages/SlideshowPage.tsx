@@ -83,7 +83,7 @@ export default function SlideshowPage() {
 
     setUrlLoading(true);
     try {
-      const res = await api.getViewUrls(roomId, posts.map((p) => p.id), true);
+      const res = await api.getViewUrls(roomId, posts.map((p) => p.id), undefined, 'slideshow');
       setViewUrlCache({ urls: res.viewUrls, expiresAt: res.expiresAt });
     } catch (_e) {
       // non-fatal: keep showing existing URLs if any
