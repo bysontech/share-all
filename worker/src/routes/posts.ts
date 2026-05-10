@@ -221,13 +221,22 @@ posts.post('/:postId/complete', async (c) => {
     .bind(now, body.participantId ?? null, body.displayFileKey ?? null, body.displayMimeType ?? null, postId)
     .run();
 
-  // Insert media_derivative for display image if one was generated
+  // Insert media_derivative for display image if one was generated (R2 WebP)
   if (body.displayFileKey) {
     await c.env.DB.prepare(
       `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, created_at)
        VALUES (?, ?, 'display_image', ?, ?, 'ready', ?)`
     )
       .bind(uuid(), postId, body.displayFileKey, body.displayMimeType ?? 'image/webp', now)
+      .run();
+  } else if (isHeicFamilyMime(post.mime_type)) {
+    // No R2 display asset: display is via Image Transformations (cdn-cgi) in view-urls, not Images Upload API.
+    // Row marks intent for ops / SQL; file_key stays NULL.
+    await c.env.DB.prepare(
+      `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, provider, created_at)
+       VALUES (?, ?, 'display_image', NULL, ?, 'ready', 'cloudflare_images', ?)`
+    )
+      .bind(uuid(), postId, post.mime_type, now)
       .run();
   }
 
@@ -327,13 +336,14 @@ posts.post('/view-urls', async (c) => {
     .bind(roomId, ...body.postIds)
     .all<PostRow>();
 
-  // preferDisplay: R2-backed display assets from media_derivatives (e.g. client WebP)
-  type DerivRow = { post_id: string; file_key: string | null };
+  // preferDisplay: R2-backed display WebP, or cloudflare_images marker (HEIC → Transformations, no Images storage)
+  type DerivRow = { post_id: string; file_key: string | null; provider: string };
   const derivativeMap: Record<string, DerivRow> = {};
   if (body.preferDisplay) {
     const { results: derivRows } = await c.env.DB.prepare(
-      `SELECT post_id, file_key FROM media_derivatives
-       WHERE post_id IN (${placeholders}) AND type = 'display_image' AND status = 'ready' AND file_key IS NOT NULL`
+      `SELECT post_id, file_key, provider FROM media_derivatives
+       WHERE post_id IN (${placeholders}) AND type = 'display_image' AND status = 'ready'
+       AND (file_key IS NOT NULL OR provider = 'cloudflare_images')`
     )
       .bind(...body.postIds)
       .all<DerivRow>();
@@ -349,6 +359,8 @@ posts.post('/view-urls', async (c) => {
       if (body.preferDisplay) {
         const deriv = derivativeMap[row.id];
         const displayKey = deriv?.file_key ?? row.display_file_key ?? null;
+        const heicTransformViaDerivative =
+          deriv?.provider === 'cloudflare_images' && !deriv.file_key;
 
         if (displayKey) {
           try {
@@ -370,8 +382,8 @@ posts.post('/view-urls', async (c) => {
           return;
         }
 
-        // HEIC/HEIF without separate display: Image Transformations wrapping Worker view-file (no Images Upload API)
-        if (isHeicFamilyMime(row.mime_type)) {
+        // HEIC/HEIF without R2 display WebP: Image Transformations wrapping Worker view-file (no Images Upload API)
+        if (isHeicFamilyMime(row.mime_type) || heicTransformViaDerivative) {
           if (transformOrigin && proxySecret) {
             try {
               const token = await createViewFileToken(proxySecret, {

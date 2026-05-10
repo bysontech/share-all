@@ -16,7 +16,8 @@ SIGNED_URL_EXPIRY_UPLOAD = "900"
 SIGNED_URL_EXPIRY_VIEW = "3600"
 FRONTEND_URL = "https://share-photo.bysontech.jp"
 UPLOAD_BODY_SIGNING_SECRET = "local-dev-only-change-in-production"
-# IMAGE_TRANSFORMATIONS_ORIGIN = "https://share-photo-api.bysontech.jp"  # optional: prod zone for /cdn-cgi/image on HEIC
+# HEIC 表示用: オレンジクラウドで /cdn-cgi/image が効く API のオリジン（未設定だと HEIC は URL なし）
+IMAGE_TRANSFORMATIONS_ORIGIN = "https://share-photo-api.bysontech.jp"
 
 [dev]
 port = 8787
