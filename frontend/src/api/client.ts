@@ -139,7 +139,14 @@ export const api = {
 
   getUploadUrl: (
     roomId: string,
-    body: { nickname: string; fileName: string; mimeType: string; fileSize: number; uploadType?: 'original' | 'display'; postId?: string }
+    body: {
+      nickname: string;
+      fileName: string;
+      mimeType: string;
+      fileSize: number;
+      uploadType?: 'original' | 'display' | 'thumbnail';
+      postId?: string;
+    }
   ) =>
     request<UploadUrlResponse>(`/rooms/${roomId}/posts/upload-url`, {
       method: 'POST',
@@ -149,7 +156,13 @@ export const api = {
   completeUpload: (
     roomId: string,
     postId: string,
-    extra?: { participantId?: string; displayFileKey?: string; displayMimeType?: string }
+    extra?: {
+      participantId?: string;
+      displayFileKey?: string;
+      displayMimeType?: string;
+      thumbnailFileKey?: string;
+      thumbnailMimeType?: string;
+    }
   ) =>
     request<{ ok: boolean }>(`/rooms/${roomId}/posts/${postId}/complete`, {
       method: 'POST',

@@ -32,7 +32,7 @@ posts.post('/upload-url', async (c) => {
     fileName?: string;
     mimeType?: string;
     fileSize?: number;
-    uploadType?: 'original' | 'display';
+    uploadType?: 'original' | 'display' | 'thumbnail';
     postId?: string;
   }>();
 
@@ -66,6 +66,37 @@ posts.post('/upload-url', async (c) => {
       if (!secret) return err('UPLOAD_BODY_SIGNING_SECRET is required for local upload proxy', 500);
       const exp = now + expirySeconds;
       const token = await createUploadBodyToken(secret, { postId: body.postId, roomId, fileKey, mimeType: 'image/webp', exp });
+      uploadUrl = `/api/rooms/${roomId}/posts/${body.postId}/upload-display?token=${encodeURIComponent(token)}`;
+    }
+
+    return c.json({ uploadUrl, fileKey, postId: body.postId }, 200);
+  }
+
+  // Thumbnail upload: signs a URL for {roomId}/thumbnails/{postId}.{ext}
+  if (body.uploadType === 'thumbnail') {
+    if (!body.postId) return err('postId is required for thumbnail uploads');
+    if (!['image/webp', 'image/jpeg'].includes(body.mimeType)) return err('thumbnail uploads must be image/webp or image/jpeg');
+    if (body.fileSize > MAX_IMAGE_SIZE) return err('File too large (max 20MB)');
+
+    const post = await getPost(c.env.DB, body.postId);
+    if (!post || post.room_id !== roomId) return err('Post not found', 404);
+
+    const ext = body.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
+    const fileKey = `${roomId}/thumbnails/${body.postId}.${ext}`;
+    let uploadUrl: string;
+
+    if (r2SupportsPresignedPut(c.env.STORAGE)) {
+      try {
+        uploadUrl = await generatePresignedPutUrl(c.env.STORAGE, fileKey, body.mimeType, expirySeconds);
+      } catch (e) {
+        console.error('Failed to generate presigned thumbnail upload URL', { roomId, postId: body.postId, error: e });
+        return err('Failed to generate upload URL', 500);
+      }
+    } else {
+      const secret = c.env.UPLOAD_BODY_SIGNING_SECRET;
+      if (!secret) return err('UPLOAD_BODY_SIGNING_SECRET is required for local upload proxy', 500);
+      const exp = now + expirySeconds;
+      const token = await createUploadBodyToken(secret, { postId: body.postId, roomId, fileKey, mimeType: body.mimeType, exp });
       uploadUrl = `/api/rooms/${roomId}/posts/${body.postId}/upload-display?token=${encodeURIComponent(token)}`;
     }
 
@@ -208,7 +239,13 @@ posts.post('/:postId/complete', async (c) => {
   if (post.room_id !== roomId) return err('Post not found', 404);
   if (post.upload_status !== 'pending') return err('Post is not pending', 409);
 
-  type CompleteBody = { participantId?: string; displayFileKey?: string; displayMimeType?: string };
+  type CompleteBody = {
+    participantId?: string;
+    displayFileKey?: string;
+    displayMimeType?: string;
+    thumbnailFileKey?: string;
+    thumbnailMimeType?: string;
+  };
   let body: CompleteBody = {};
   try { body = await c.req.json<CompleteBody>(); } catch { /* empty body ok */ }
 
@@ -237,6 +274,16 @@ posts.post('/:postId/complete', async (c) => {
        VALUES (?, ?, 'display_image', NULL, ?, 'ready', 'cloudflare_images', ?)`
     )
       .bind(uuid(), postId, post.mime_type, now)
+      .run();
+  }
+
+  // Register thumbnail derivative (video thumbnail or image thumbnail)
+  if (body.thumbnailFileKey) {
+    await c.env.DB.prepare(
+      `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, created_at)
+       VALUES (?, ?, 'thumbnail', ?, ?, 'ready', ?)`
+    )
+      .bind(uuid(), postId, body.thumbnailFileKey, body.thumbnailMimeType ?? 'image/webp', now)
       .run();
   }
 
@@ -409,8 +456,8 @@ posts.post('/view-urls', async (c) => {
     return c.json({ viewUrls, expiresAt: exp });
   }
 
-  // ── Display / Thumbnail: display_image derivatives (thumbnail falls back to display_image) ──
-  if (purpose === 'display' || purpose === 'thumbnail') {
+  // ── Display: display_image derivatives for images ──
+  if (purpose === 'display') {
     type DerivRow = { post_id: string; file_key: string | null; provider: string };
     const { results: derivRows } = await c.env.DB.prepare(
       `SELECT post_id, file_key, provider FROM media_derivatives
@@ -457,17 +504,95 @@ posts.post('/view-urls', async (c) => {
           return;
         }
 
-        // Other images (JPEG/PNG/WebP): sign original
-        try {
-          if (usePresigned) {
-            viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
-          } else {
-            const token = await createViewFileToken(proxySecret!, {
-              postId: row.id, roomId, fileKey: row.file_key, exp,
-            });
-            viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+        // Other images (JPEG/PNG/WebP): sign original; videos omitted
+        if (!row.mime_type.startsWith('video/')) {
+          try {
+            if (usePresigned) {
+              viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
+            } else {
+              const token = await createViewFileToken(proxySecret!, {
+                postId: row.id, roomId, fileKey: row.file_key, exp,
+              });
+              viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+            }
+          } catch (_e) { /* skip */ }
+        }
+      })
+    );
+
+    return c.json({ viewUrls, expiresAt: exp });
+  }
+
+  // ── Thumbnail: thumbnail derivative first, then display_image fallback for images only ──
+  if (purpose === 'thumbnail') {
+    type ThumbRow = { post_id: string; file_key: string | null; provider: string; type: string };
+    const { results: thumbRows } = await c.env.DB.prepare(
+      `SELECT post_id, file_key, provider, type FROM media_derivatives
+       WHERE post_id IN (${placeholders}) AND type IN ('thumbnail', 'display_image') AND status = 'ready'
+       AND (file_key IS NOT NULL OR provider = 'cloudflare_images')`
+    )
+      .bind(...body.postIds)
+      .all<ThumbRow>();
+
+    const thumbMap: Record<string, ThumbRow> = {};
+    const displayMap: Record<string, ThumbRow> = {};
+    thumbRows.forEach((r) => {
+      if (r.type === 'thumbnail') thumbMap[r.post_id] = r;
+      else if (r.type === 'display_image' && !displayMap[r.post_id]) displayMap[r.post_id] = r;
+    });
+
+    async function signKey(postId: string, fileKey: string): Promise<string | null> {
+      try {
+        if (usePresigned) return await generatePresignedGetUrl(c.env.STORAGE, fileKey, expirySeconds);
+        if (proxySecret) {
+          const token = await createViewFileToken(proxySecret, { postId, roomId, fileKey, exp });
+          return `/api/rooms/${roomId}/posts/${postId}/view-file?token=${encodeURIComponent(token)}`;
+        }
+      } catch (_e) { /* skip */ }
+      return null;
+    }
+
+    await Promise.all(
+      postRows.map(async (row) => {
+        const isVideo = row.mime_type.startsWith('video/');
+
+        // 1. Thumbnail derivative (video thumbnails and image thumbnails)
+        const thumb = thumbMap[row.id];
+        if (thumb?.file_key) {
+          const url = await signKey(row.id, thumb.file_key);
+          if (url) viewUrls[row.id] = url;
+          return;
+        }
+
+        // 2. Videos without thumbnail: omit (never expose original video URL as display)
+        if (isVideo) return;
+
+        // 3. Image fallback: display_image derivative
+        const display = displayMap[row.id];
+        const displayKey = display?.file_key ?? row.display_file_key ?? null;
+        const heicTransform = display?.provider === 'cloudflare_images' && !display.file_key;
+
+        if (displayKey) {
+          const url = await signKey(row.id, displayKey);
+          if (url) viewUrls[row.id] = url;
+          return;
+        }
+
+        if (isHeicFamilyMime(row.mime_type) || heicTransform) {
+          if (transformOrigin && proxySecret) {
+            try {
+              const token = await createViewFileToken(proxySecret, { postId: row.id, roomId, fileKey: row.file_key, exp });
+              const base = transformOrigin.replace(/\/$/, '');
+              const inner = `${base}/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+              viewUrls[row.id] = buildCdnCgiImageUrl(transformOrigin, inner);
+            } catch (_e) { /* skip */ }
           }
-        } catch (_e) { /* skip */ }
+          return;
+        }
+
+        // 4. JPEG/PNG/WebP without display_image: sign original
+        const url = await signKey(row.id, row.file_key);
+        if (url) viewUrls[row.id] = url;
       })
     );
 

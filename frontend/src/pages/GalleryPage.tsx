@@ -269,7 +269,8 @@ export default function GalleryPage() {
         setPosts(r.posts);
         if (r.posts.length === 0) { setLoading(false); return; }
         const ids = r.posts.map(p => p.id);
-        return api.getViewUrls(roomId, ids, undefined, 'display').then(v =>
+        // thumbnail purpose: video thumbnail for videos, display_image for images
+        return api.getViewUrls(roomId, ids, undefined, 'thumbnail').then(v =>
           setViewUrlCache({ urls: v.viewUrls, expiresAt: v.expiresAt })
         );
       })
@@ -623,25 +624,46 @@ export default function GalleryPage() {
                     WebkitTapHighlightColor: 'transparent',
                   }}
                 >
-                  {url ? (
+                  {post.file_type === 'video' ? (
+                    // Video card: show thumbnail if available, else dark placeholder
+                    <div style={{ width: '100%', height: '100%', position: 'relative', background: '#2a2a3a' }}>
+                      {url ? (
+                        <img
+                          src={resolvePublicMediaUrl(url)}
+                          alt=""
+                          loading="lazy"
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                        />
+                      ) : (
+                        <div style={{
+                          width: '100%', height: '100%',
+                          display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', justifyContent: 'center', gap: 4,
+                        }}>
+                          <span style={{ fontSize: 22, color: '#8899cc' }}>▶</span>
+                          {post.file_size > 0 && (
+                            <span style={{ fontSize: 9, color: '#667' }}>{formatFileSize(post.file_size)}</span>
+                          )}
+                        </div>
+                      )}
+                      {/* Video badge overlay */}
+                      <div style={{
+                        position: 'absolute', bottom: 4, left: 4,
+                        background: 'rgba(0,0,0,0.65)', borderRadius: 3,
+                        padding: '2px 5px', display: 'flex', alignItems: 'center', gap: 3,
+                        pointerEvents: 'none',
+                      }}>
+                        <span style={{ fontSize: 9, color: '#fff' }}>▶</span>
+                        <span style={{ fontSize: 9, color: '#ccc' }}>動画</span>
+                      </div>
+                    </div>
+                  ) : url ? (
                     <img
                       src={resolvePublicMediaUrl(url)}
                       alt=""
                       loading="lazy"
                       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     />
-                  ) : post.file_type === 'video' ? (
-                    <div style={{
-                      width: '100%', height: '100%', background: '#2a2a3a',
-                      display: 'flex', flexDirection: 'column',
-                      alignItems: 'center', justifyContent: 'center', gap: 4,
-                    }}>
-                      <span style={{ fontSize: 22, color: '#8899cc' }}>▶</span>
-                      <span style={{ fontSize: 9, color: '#8899cc' }}>動画</span>
-                      {post.file_size > 0 && (
-                        <span style={{ fontSize: 9, color: '#667' }}>{formatFileSize(post.file_size)}</span>
-                      )}
-                    </div>
                   ) : (
                     <div style={{
                       width: '100%', height: '100%', background: '#ede8df',
