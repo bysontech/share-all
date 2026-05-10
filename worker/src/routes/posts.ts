@@ -240,6 +240,19 @@ posts.post('/:postId/complete', async (c) => {
       .run();
   }
 
+  // Register slideshow_image derivative for images when Transformations is available.
+  // file_key stores the source image (display WebP if present, else original).
+  // The actual cdn-cgi URL is built on-demand in view-urls.
+  if (post.file_type === 'image' && c.env.IMAGE_TRANSFORMATIONS_ORIGIN) {
+    const slideshowSourceKey = body.displayFileKey ?? post.file_key;
+    await c.env.DB.prepare(
+      `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, created_at, provider)
+       VALUES (?, ?, 'slideshow_image', ?, 'image/webp', 'ready', ?, 'cloudflare_images')`
+    )
+      .bind(uuid(), postId, slideshowSourceKey, now)
+      .run();
+  }
+
   return c.json({ ok: true });
 });
 
@@ -308,13 +321,21 @@ posts.post('/view-urls', async (c) => {
   const roomResult = await getRoomAndValidate(c.env.DB, roomId);
   if ('error' in roomResult) return err(roomResult.error, roomResult.status);
 
-  const body = await c.req.json<{ postIds?: string[]; preferDisplay?: boolean }>();
+  const body = await c.req.json<{
+    postIds?: string[];
+    preferDisplay?: boolean;
+    purpose?: 'display' | 'slideshow' | 'thumbnail';
+  }>();
   if (!Array.isArray(body.postIds) || body.postIds.length === 0) {
     return err('postIds must be a non-empty array');
   }
   if (body.postIds.length > 50) {
     return err('postIds too many (max 50)');
   }
+
+  // purpose takes priority over legacy preferDisplay flag
+  const purpose: 'display' | 'slideshow' | 'thumbnail' | null =
+    body.purpose ?? (body.preferDisplay ? 'display' : null);
 
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
   const usePresigned = r2SupportsPresignedPut(c.env.STORAGE);
@@ -336,10 +357,61 @@ posts.post('/view-urls', async (c) => {
     .bind(roomId, ...body.postIds)
     .all<PostRow>();
 
-  // preferDisplay: R2-backed display WebP, or cloudflare_images marker (HEIC → Transformations, no Images storage)
-  type DerivRow = { post_id: string; file_key: string | null; provider: string };
-  const derivativeMap: Record<string, DerivRow> = {};
-  if (body.preferDisplay) {
+  const viewUrls: Record<string, string> = {};
+  const exp = nowSec() + expirySeconds;
+  const transformOrigin = c.env.IMAGE_TRANSFORMATIONS_ORIGIN?.trim();
+
+  // ── Slideshow: use slideshow_image derivatives only, build Transformations URL ──
+  if (purpose === 'slideshow') {
+    type SlideshowDerivRow = { post_id: string; file_key: string | null; provider: string };
+    const { results: slideshowRows } = await c.env.DB.prepare(
+      `SELECT post_id, file_key, provider FROM media_derivatives
+       WHERE post_id IN (${placeholders}) AND type = 'slideshow_image' AND status = 'ready'`
+    )
+      .bind(...body.postIds)
+      .all<SlideshowDerivRow>();
+    const slideshowMap: Record<string, SlideshowDerivRow> = {};
+    slideshowRows.forEach((r) => { slideshowMap[r.post_id] = r; });
+
+    await Promise.all(
+      postRows.map(async (row) => {
+        const deriv = slideshowMap[row.id];
+        if (!deriv) return; // no slideshow_image, omit
+
+        if (deriv.provider === 'cloudflare_images' && deriv.file_key && transformOrigin && proxySecret) {
+          try {
+            const token = await createViewFileToken(proxySecret, {
+              postId: row.id, roomId, fileKey: deriv.file_key, exp,
+            });
+            const base = transformOrigin.replace(/\/$/, '');
+            const inner = `${base}/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+            viewUrls[row.id] = buildCdnCgiImageUrl(transformOrigin, inner, { width: 2048 });
+          } catch (_e) { /* skip */ }
+          return;
+        }
+
+        // R2-backed slideshow file (future-proof)
+        if (deriv.file_key) {
+          try {
+            if (usePresigned) {
+              viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, deriv.file_key, expirySeconds);
+            } else if (proxySecret) {
+              const token = await createViewFileToken(proxySecret, {
+                postId: row.id, roomId, fileKey: deriv.file_key, exp,
+              });
+              viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+            }
+          } catch (_e) { /* skip */ }
+        }
+      })
+    );
+
+    return c.json({ viewUrls, expiresAt: exp });
+  }
+
+  // ── Display / Thumbnail: display_image derivatives (thumbnail falls back to display_image) ──
+  if (purpose === 'display' || purpose === 'thumbnail') {
+    type DerivRow = { post_id: string; file_key: string | null; provider: string };
     const { results: derivRows } = await c.env.DB.prepare(
       `SELECT post_id, file_key, provider FROM media_derivatives
        WHERE post_id IN (${placeholders}) AND type = 'display_image' AND status = 'ready'
@@ -347,20 +419,14 @@ posts.post('/view-urls', async (c) => {
     )
       .bind(...body.postIds)
       .all<DerivRow>();
+    const derivativeMap: Record<string, DerivRow> = {};
     derivRows.forEach((r) => { derivativeMap[r.post_id] = r; });
-  }
 
-  const viewUrls: Record<string, string> = {};
-  const exp = nowSec() + expirySeconds;
-  const transformOrigin = c.env.IMAGE_TRANSFORMATIONS_ORIGIN?.trim();
-
-  await Promise.all(
-    postRows.map(async (row) => {
-      if (body.preferDisplay) {
+    await Promise.all(
+      postRows.map(async (row) => {
         const deriv = derivativeMap[row.id];
         const displayKey = deriv?.file_key ?? row.display_file_key ?? null;
-        const heicTransformViaDerivative =
-          deriv?.provider === 'cloudflare_images' && !deriv.file_key;
+        const heicTransformViaDerivative = deriv?.provider === 'cloudflare_images' && !deriv.file_key;
 
         if (displayKey) {
           try {
@@ -368,79 +434,59 @@ posts.post('/view-urls', async (c) => {
               viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, displayKey, expirySeconds);
             } else {
               const token = await createViewFileToken(proxySecret!, {
-                postId: row.id,
-                roomId,
-                fileKey: displayKey,
-                exp,
+                postId: row.id, roomId, fileKey: displayKey, exp,
               });
-              viewUrls[row.id] =
-                `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+              viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
             }
-          } catch (_e) {
-            /* skip */
-          }
+          } catch (_e) { /* skip */ }
           return;
         }
 
-        // HEIC/HEIF without R2 display WebP: Image Transformations wrapping Worker view-file (no Images Upload API)
+        // HEIC/HEIF without R2 display WebP: Transformations wrapping view-file
         if (isHeicFamilyMime(row.mime_type) || heicTransformViaDerivative) {
           if (transformOrigin && proxySecret) {
             try {
               const token = await createViewFileToken(proxySecret, {
-                postId: row.id,
-                roomId,
-                fileKey: row.file_key,
-                exp,
+                postId: row.id, roomId, fileKey: row.file_key, exp,
               });
               const base = transformOrigin.replace(/\/$/, '');
-              const innerAbsolute =
-                `${base}/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
-              viewUrls[row.id] = buildCdnCgiImageUrl(transformOrigin, innerAbsolute);
-            } catch (_e) {
-              /* skip */
-            }
+              const inner = `${base}/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+              viewUrls[row.id] = buildCdnCgiImageUrl(transformOrigin, inner);
+            } catch (_e) { /* skip */ }
           }
           return;
         }
 
-        // Other images: sign original (JPEG/PNG/WebP in R2)
+        // Other images (JPEG/PNG/WebP): sign original
         try {
           if (usePresigned) {
             viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
           } else {
             const token = await createViewFileToken(proxySecret!, {
-              postId: row.id,
-              roomId,
-              fileKey: row.file_key,
-              exp,
+              postId: row.id, roomId, fileKey: row.file_key, exp,
             });
-            viewUrls[row.id] =
-              `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+            viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
           }
-        } catch (_e) {
-          /* skip */
-        }
-        return;
-      }
+        } catch (_e) { /* skip */ }
+      })
+    );
 
-      // Downloads: always original file (same as before)
-      const keyToSign = row.file_key;
+    return c.json({ viewUrls, expiresAt: exp });
+  }
+
+  // ── Download: always original file ──
+  await Promise.all(
+    postRows.map(async (row) => {
       try {
         if (usePresigned) {
-          viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, keyToSign, expirySeconds);
+          viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
         } else {
           const token = await createViewFileToken(proxySecret!, {
-            postId: row.id,
-            roomId,
-            fileKey: keyToSign,
-            exp,
+            postId: row.id, roomId, fileKey: row.file_key, exp,
           });
-          viewUrls[row.id] =
-            `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
+          viewUrls[row.id] = `/api/rooms/${roomId}/posts/${row.id}/view-file?token=${encodeURIComponent(token)}`;
         }
-      } catch (_e) {
-        /* skip */
-      }
+      } catch (_e) { /* skip */ }
     })
   );
 
