@@ -14,6 +14,12 @@ export interface Env {
    * When set, HEIC/HEIF display uses /cdn-cgi/image/... wrapping view-file URLs (no Images Upload API).
    */
   IMAGE_TRANSFORMATIONS_ORIGIN?: string;
+  /** SHA-256 hex digest of the admin password. Set via wrangler secret. */
+  ADMIN_PASSWORD_HASH?: string;
+  /** HMAC-SHA256 key for signing admin session cookies. Set via wrangler secret. */
+  ADMIN_SESSION_SECRET?: string;
+  /** Max-Age in seconds for the admin session cookie (default: 86400). */
+  ADMIN_SESSION_MAX_AGE?: string;
 }
 
 export interface Room {
