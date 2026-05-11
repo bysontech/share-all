@@ -240,6 +240,67 @@ export const api = {
     }),
 };
 
+// ── Admin API (credentials: 'include') ──
+
+async function adminRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_PREFIX}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    credentials: 'include',
+    ...init,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new ApiError(res.status, (body as { error?: string }).error ?? 'Unknown error');
+  }
+  return res.json() as Promise<T>;
+}
+
+export interface AdminRoomItem {
+  roomId: string;
+  name: string;
+  description: string | null;
+  createdAt: number;
+  expiresAt: number;
+  participantUrl: string;
+  adminUrl: string;
+  postCount: number;
+  imageCount: number;
+  videoCount: number;
+}
+
+export interface AdminCreateRoomResponse {
+  roomId: string;
+  hostToken: string;
+  participantUrl: string;
+  adminUrl: string;
+  expiresAt: number;
+}
+
+export const adminApi = {
+  me: () => adminRequest<{ ok: boolean }>('/admin/me'),
+
+  login: (password: string) =>
+    adminRequest<{ ok: boolean }>('/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+
+  logout: () => adminRequest<{ ok: boolean }>('/admin/logout', { method: 'POST' }),
+
+  getRooms: () => adminRequest<{ rooms: AdminRoomItem[] }>('/admin/rooms'),
+
+  createRoom: (body: { name: string; description?: string; passcode?: string }) =>
+    adminRequest<AdminCreateRoomResponse>('/admin/rooms', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  deleteRoom: (roomId: string) =>
+    adminRequest<{ ok: boolean; deletedPosts: number }>(`/admin/rooms/${roomId}`, {
+      method: 'DELETE',
+    }),
+};
+
 export async function putToR2(uploadUrl: string, data: File | Blob): Promise<void> {
   // Worker は proxy モードで /api/... の相対 URL を返す。別オリジン時は VITE_API_BASE 前置が必要
   const res = await fetch(resolvePublicMediaUrl(uploadUrl), {
