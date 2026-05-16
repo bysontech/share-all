@@ -18,9 +18,16 @@ export function resolvePublicMediaUrl(url: string | undefined | null): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const { headers: hdr, ...rest } = init ?? {};
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(hdr as Record<string, string> | undefined),
+  };
+
   const res = await fetch(`${API_PREFIX}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    ...init,
+    credentials: 'include',
+    ...rest,
+    headers,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: 'Unknown error' }));
@@ -130,11 +137,11 @@ export const api = {
   getSlideshowSettings: (roomId: string) =>
     request<SlideshowSettings>(`/rooms/${roomId}/slideshow-settings`),
 
-  updateSlideshowSettings: (roomId: string, hostToken: string, settings: SlideshowSettings) =>
+  updateSlideshowSettings: (roomId: string, settings: SlideshowSettings, hostToken?: string) =>
     request<SlideshowSettings>(`/rooms/${roomId}/slideshow-settings`, {
       method: 'PUT',
-      headers: { 'X-Host-Token': hostToken },
       body: JSON.stringify(settings),
+      ...(hostToken ? { headers: { 'X-Host-Token': hostToken } } : {}),
     }),
 
   getUploadUrl: (
@@ -197,11 +204,11 @@ export const api = {
   // Theme APIs
   getTheme: (roomId: string) => request<ThemeSettings>(`/rooms/${roomId}/theme`),
 
-  updateTheme: (roomId: string, hostToken: string, settings: Partial<ThemeSettings>) =>
+  updateTheme: (roomId: string, settings: Partial<ThemeSettings>, hostToken?: string) =>
     request<ThemeSettings>(`/rooms/${roomId}/theme`, {
       method: 'PUT',
-      headers: { 'X-Host-Token': hostToken },
       body: JSON.stringify(settings),
+      ...(hostToken ? { headers: { 'X-Host-Token': hostToken } } : {}),
     }),
 
   getThemeViewUrls: (roomId: string) =>
@@ -209,34 +216,39 @@ export const api = {
 
   getThemeUploadUrl: (
     roomId: string,
-    hostToken: string,
     imageType: 'main_visual' | 'background',
     mimeType: string,
-    fileSize: number
+    fileSize: number,
+    hostToken?: string
   ) =>
     request<ThemeUploadUrlResponse>(`/rooms/${roomId}/theme/upload-url`, {
       method: 'POST',
-      headers: { 'X-Host-Token': hostToken },
       body: JSON.stringify({ imageType, mimeType, fileSize }),
+      ...(hostToken ? { headers: { 'X-Host-Token': hostToken } } : {}),
     }),
 
   // Admin APIs
-  getAdminPosts: (roomId: string, hostToken: string) =>
+  getAdminPosts: (roomId: string, hostToken?: string) =>
     request<{ posts: AdminPost[] }>(`/rooms/${roomId}/posts/admin`, {
-      headers: { 'X-Host-Token': hostToken },
+      ...(hostToken ? { headers: { 'X-Host-Token': hostToken } } : {}),
     }),
 
-  updatePostStatus: (roomId: string, postId: string, hostToken: string, status: 'visible' | 'hidden') =>
+  updatePostStatus: (
+    roomId: string,
+    postId: string,
+    status: 'visible' | 'hidden',
+    hostToken?: string
+  ) =>
     request<{ id: string; status: string }>(`/rooms/${roomId}/posts/${postId}`, {
       method: 'PATCH',
-      headers: { 'X-Host-Token': hostToken },
       body: JSON.stringify({ status }),
+      ...(hostToken ? { headers: { 'X-Host-Token': hostToken } } : {}),
     }),
 
-  deletePost: (roomId: string, postId: string, hostToken: string) =>
+  deletePost: (roomId: string, postId: string, hostToken?: string) =>
     request<{ ok: boolean }>(`/rooms/${roomId}/posts/${postId}`, {
       method: 'DELETE',
-      headers: { 'X-Host-Token': hostToken },
+      ...(hostToken ? { headers: { 'X-Host-Token': hostToken } } : {}),
     }),
 };
 

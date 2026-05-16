@@ -1,12 +1,11 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { uuid, nowSec } from '../utils';
+import { ADMIN_SESSION_COOKIE, verifyAdminSiteSession } from '../adminSession';
 
 type ParamRoomId = { roomId: string };
 
 const admin = new Hono<{ Bindings: Env }>();
-
-const COOKIE_NAME = 'admin_session';
 
 // ── Crypto helpers ──
 
@@ -42,20 +41,8 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-// ── Cookie helpers ──
-
-function parseCookie(cookieHeader: string | undefined, name: string): string | null {
-  if (!cookieHeader) return null;
-  for (const part of cookieHeader.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
-  }
-  return null;
-}
-
 function buildSetCookie(value: string, maxAge: number, secure: boolean): string {
-  let s = `${COOKIE_NAME}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
+  let s = `${ADMIN_SESSION_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
   if (secure) s += '; Secure';
   return s;
 }
@@ -68,19 +55,6 @@ async function issueSessionCookie(secret: string, maxAge: number, secure: boolea
   return buildSetCookie(`${payload}.${sig}`, maxAge, secure);
 }
 
-async function verifySession(env: Env, cookieHeader: string | undefined): Promise<boolean> {
-  const secret = env.ADMIN_SESSION_SECRET?.trim();
-  if (!secret) return false;
-  const raw = parseCookie(cookieHeader, COOKIE_NAME);
-  if (!raw) return false;
-  const lastDot = raw.lastIndexOf('.');
-  if (lastDot < 0) return false;
-  const payload = raw.slice(0, lastDot);
-  const givenSig = raw.slice(lastDot + 1);
-  const expectedSig = await hmacSign(secret, payload);
-  return timingSafeEqual(givenSig, expectedSig);
-}
-
 function isSecureEnv(env: Env): boolean {
   return (env.FRONTEND_URL ?? '').startsWith('https://');
 }
@@ -88,7 +62,7 @@ function isSecureEnv(env: Env): boolean {
 // ── Middleware ──
 
 async function requireAdmin(c: { env: Env; req: { header: (name: string) => string | undefined }; json: (data: unknown, status?: number) => Response }): Promise<Response | null> {
-  const ok = await verifySession(c.env, c.req.header('Cookie'));
+  const ok = await verifyAdminSiteSession(c.env, c.req.header('Cookie'));
   if (!ok) return c.json({ error: 'Unauthorized' }, 401);
   return null;
 }

@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { ALLOWED_IMAGE_MIMES, ALLOWED_VIDEO_MIMES, MAX_IMAGE_SIZE, MAX_VIDEO_SIZE } from '../types';
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
-import { getRoomAndValidate, getPost, validateHostToken } from '../db';
+import { getRoomAndValidate, getPost } from '../db';
+import { authorizeRoomManage } from '../roomManageAuth';
 import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
 import { buildCdnCgiImageUrl } from '../image-transformations';
 import {
@@ -626,7 +627,7 @@ posts.get('/admin', async (c) => {
   if ('error' in roomResult) return err(roomResult.error, roomResult.status);
   const { room } = roomResult;
 
-  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+  if (!(await authorizeRoomManage(c.env, room, c.req.header('X-Host-Token'), c.req.header('Cookie')))) {
     return err('Unauthorized', 401);
   }
 
@@ -656,7 +657,7 @@ posts.patch('/:postId', async (c) => {
   if ('error' in roomResult) return err(roomResult.error, roomResult.status);
   const { room } = roomResult;
 
-  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+  if (!(await authorizeRoomManage(c.env, room, c.req.header('X-Host-Token'), c.req.header('Cookie')))) {
     return err('Unauthorized', 401);
   }
 
@@ -682,7 +683,7 @@ posts.delete('/:postId', async (c) => {
   if ('error' in roomResult) return err(roomResult.error, roomResult.status);
   const { room } = roomResult;
 
-  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+  if (!(await authorizeRoomManage(c.env, room, c.req.header('X-Host-Token'), c.req.header('Cookie')))) {
     return err('Unauthorized', 401);
   }
 

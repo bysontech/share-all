@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { ALLOWED_IMAGE_MIMES, MAX_IMAGE_SIZE } from '../types';
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
-import { getRoomAndValidate, validateHostToken } from '../db';
+import { getRoomAndValidate } from '../db';
+import { authorizeRoomManage } from '../roomManageAuth';
 import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
 import { createUploadBodyToken, createViewFileToken } from '../uploadBodyToken';
 
@@ -65,7 +66,7 @@ theme.put('/', async (c) => {
   if ('error' in roomResult) return err(roomResult.error, roomResult.status);
   const { room } = roomResult;
 
-  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+  if (!(await authorizeRoomManage(c.env, room, c.req.header('X-Host-Token'), c.req.header('Cookie')))) {
     return err('Unauthorized', 401);
   }
 
@@ -124,7 +125,7 @@ theme.post('/upload-url', async (c) => {
   if ('error' in roomResult) return err(roomResult.error, roomResult.status);
   const { room } = roomResult;
 
-  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+  if (!(await authorizeRoomManage(c.env, room, c.req.header('X-Host-Token'), c.req.header('Cookie')))) {
     return err('Unauthorized', 401);
   }
 

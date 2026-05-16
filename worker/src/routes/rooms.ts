@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { uuid, nowSec, err } from '../utils';
-import { getRoomAndValidate, validateHostToken } from '../db';
+import { getRoomAndValidate } from '../db';
+import { authorizeRoomManage } from '../roomManageAuth';
 
 type ParamRoomId = { roomId: string };
 
@@ -80,7 +81,7 @@ rooms.put('/:roomId/slideshow-settings', async (c) => {
   if ('error' in result) return err(result.error, result.status);
   const { room } = result;
 
-  if (!validateHostToken(room, c.req.header('X-Host-Token'))) {
+  if (!(await authorizeRoomManage(c.env, room, c.req.header('X-Host-Token'), c.req.header('Cookie')))) {
     return err('Unauthorized', 401);
   }
 

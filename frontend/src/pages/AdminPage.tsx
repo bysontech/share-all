@@ -142,12 +142,10 @@ const EMPTY_THEME: ThemeSettings = {
 function ThemeSettingsForm({
   initial,
   roomId,
-  hostToken,
   onSaved,
 }: {
   initial: ThemeSettings;
   roomId: string;
-  hostToken: string;
   onSaved: (t: ThemeSettings) => void;
 }) {
   const [title, setTitle] = useState(initial.title ?? '');
@@ -178,7 +176,7 @@ function ThemeSettingsForm({
   ) {
     setUploading(true);
     try {
-      const res = await api.getThemeUploadUrl(roomId, hostToken, imageType, file.type, file.size);
+      const res = await api.getThemeUploadUrl(roomId, imageType, file.type, file.size);
       await putToR2(res.uploadUrl, file);
       setKey(res.fileKey);
     } catch (e) {
@@ -192,7 +190,7 @@ function ThemeSettingsForm({
     setSaving(true);
     setMsg('');
     try {
-      const updated = await api.updateTheme(roomId, hostToken, {
+      const updated = await api.updateTheme(roomId, {
         title: title.trim() || null,
         message: message.trim() || null,
         mainVisualKey,
@@ -296,11 +294,6 @@ function ThemeSettingsForm({
 export default function AdminPage() {
   const { roomId } = useParams<{ roomId: string }>();
 
-  const tokenKey = `hostToken:${roomId}`;
-  const [hostToken, setHostToken] = useState(() => localStorage.getItem(tokenKey) ?? '');
-  const [tokenInput, setTokenInput] = useState('');
-  const [tokenError, setTokenError] = useState('');
-
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [roomError, setRoomError] = useState('');
 
@@ -340,28 +333,29 @@ export default function AdminPage() {
   }, [roomId]);
 
   const loadPosts = useCallback(async () => {
-    if (!roomId || !hostToken) return;
+    if (!roomId) return;
     setPostsLoading(true);
     try {
-      const res = await api.getAdminPosts(roomId, hostToken);
+      const res = await api.getAdminPosts(roomId);
       setPosts(res.posts);
       setPostsError('');
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
-        setTokenError('ホストトークンが正しくありません');
-        setHostToken('');
-        localStorage.removeItem(tokenKey);
+        setPosts([]);
+        setPostsError(
+          'サイトの管理者でログインしてください。トップ（/）でログイン後、再度このページを開いてください。'
+        );
       } else {
         setPostsError(e instanceof ApiError ? e.message : '投稿の取得に失敗しました');
       }
     } finally {
       setPostsLoading(false);
     }
-  }, [roomId, hostToken, tokenKey]);
+  }, [roomId]);
 
   useEffect(() => {
-    if (hostToken) loadPosts();
-  }, [hostToken, loadPosts]);
+    loadPosts();
+  }, [loadPosts]);
 
   function showAction(msg: string) {
     setActionMsg(msg);
@@ -369,18 +363,10 @@ export default function AdminPage() {
     actionTimerRef.current = setTimeout(() => setActionMsg(''), 4000);
   }
 
-  function handleTokenSubmit() {
-    const t = tokenInput.trim();
-    if (!t) { setTokenError('トークンを入力してください'); return; }
-    localStorage.setItem(tokenKey, t);
-    setHostToken(t);
-    setTokenError('');
-  }
-
   async function handleToggle(postId: string, next: 'visible' | 'hidden') {
-    if (!roomId || !hostToken) return;
+    if (!roomId) return;
     try {
-      await api.updatePostStatus(roomId, postId, hostToken, next);
+      await api.updatePostStatus(roomId, postId, next);
       setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, status: next } : p)));
       showAction(next === 'hidden' ? '非表示にしました' : '表示に変更しました');
     } catch (e) {
@@ -389,10 +375,10 @@ export default function AdminPage() {
   }
 
   async function handleDelete(postId: string) {
-    if (!roomId || !hostToken) return;
+    if (!roomId) return;
     if (!window.confirm('この投稿を削除しますか？\nR2とDBから完全に削除されます。')) return;
     try {
-      await api.deletePost(roomId, postId, hostToken);
+      await api.deletePost(roomId, postId);
       setPosts((prev) => prev.filter((p) => p.id !== postId));
       showAction('削除しました');
     } catch (e) {
@@ -401,11 +387,11 @@ export default function AdminPage() {
   }
 
   async function handleSaveSettings(next: SlideshowSettings) {
-    if (!roomId || !hostToken) return;
+    if (!roomId) return;
     setSettingsSaving(true);
     setSettingsMsg('');
     try {
-      const updated = await api.updateSlideshowSettings(roomId, hostToken, next);
+      const updated = await api.updateSlideshowSettings(roomId, next);
       setSettings(updated);
       setSettingsMsg('保存しました');
     } catch (e) {
@@ -427,30 +413,6 @@ export default function AdminPage() {
 
   if (!room) return <div style={{ padding: 24 }}>読み込み中...</div>;
 
-  // Login form
-  if (!hostToken) {
-    return (
-      <div style={{ maxWidth: 480, margin: '40px auto', padding: '0 16px' }}>
-        <h2>{room.name} — 管理者ログイン</h2>
-        <p style={{ fontSize: 14, color: '#555' }}>
-          ルーム作成時に発行されたホストトークンを入力してください。
-        </p>
-        <input
-          type="text"
-          value={tokenInput}
-          onChange={(e) => setTokenInput(e.target.value)}
-          placeholder="host token (UUID)"
-          onKeyDown={(e) => e.key === 'Enter' && handleTokenSubmit()}
-          style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginBottom: 8, fontFamily: 'monospace' }}
-        />
-        {tokenError && <p style={{ color: 'red', margin: '0 0 8px' }}>{tokenError}</p>}
-        <button onClick={handleTokenSubmit} style={{ padding: '8px 20px', cursor: 'pointer' }}>
-          ログイン
-        </button>
-      </div>
-    );
-  }
-
   const expiresDate = new Date(room.expiresAt * 1000).toLocaleDateString('ja-JP');
   const visibleCount = posts.filter((p) => p.status === 'visible').length;
   const hiddenCount = posts.filter((p) => p.status === 'hidden').length;
@@ -460,15 +422,20 @@ export default function AdminPage() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <h2 style={{ margin: 0 }}>{room.name} — 管理</h2>
-        <button
-          onClick={() => {
-            localStorage.removeItem(tokenKey);
-            setHostToken('');
+        <Link
+          to="/"
+          style={{
+            fontSize: 12,
+            padding: '6px 12px',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            color: '#333',
+            textDecoration: 'none',
+            flexShrink: 0,
           }}
-          style={{ fontSize: 12, padding: '4px 10px', cursor: 'pointer' }}
         >
-          ログアウト
-        </button>
+          サイトの管理へ
+        </Link>
       </div>
       <p style={{ fontSize: 13, color: '#888', margin: '0 0 20px' }}>有効期限: {expiresDate}</p>
 
@@ -525,7 +492,7 @@ export default function AdminPage() {
         </div>
         {postsError && <p style={{ color: 'red', fontSize: 13 }}>{postsError}</p>}
         {posts.length === 0 && !postsLoading ? (
-          <p style={{ color: '#888' }}>投稿はまだありません</p>
+          !postsError ? <p style={{ color: '#888' }}>投稿はまだありません</p> : null
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -567,12 +534,7 @@ export default function AdminPage() {
       {/* Theme settings */}
       <section style={{ marginBottom: 32 }}>
         <h3 style={{ margin: '0 0 14px' }}>テーマ設定（参加者画面）</h3>
-        <ThemeSettingsForm
-          initial={theme}
-          roomId={roomId ?? ''}
-          hostToken={hostToken}
-          onSaved={setTheme}
-        />
+        <ThemeSettingsForm initial={theme} roomId={roomId ?? ''} onSaved={setTheme} />
       </section>
     </div>
   );
