@@ -25,7 +25,7 @@ function LoginForm({ onLogin }: { onLogin: () => void }) {
 
   return (
     <div style={{ maxWidth: 360, margin: '80px auto', padding: '0 16px' }}>
-      <h1 style={{ marginBottom: 8 }}>Share All</h1>
+      <h1 style={{ marginBottom: 8 }}>Share Photo</h1>
       <h2 style={{ marginBottom: 24 }}>管理者ログイン</h2>
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <label>
@@ -128,7 +128,7 @@ function AdminTop({ onLogout }: { onLogout: () => void }) {
   return (
     <div style={{ maxWidth: 900, margin: '40px auto', padding: '0 16px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1 style={{ margin: 0 }}>Share All 管理</h1>
+        <h1 style={{ margin: 0 }}>Share Photo 管理</h1>
         <button onClick={handleLogout} style={{ padding: '6px 16px', cursor: 'pointer' }}>
           ログアウト
         </button>

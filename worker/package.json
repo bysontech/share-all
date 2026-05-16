@@ -7,8 +7,8 @@
     "deploy": "wrangler deploy",
     "build": "npm run typecheck && wrangler deploy --dry-run",
     "typecheck": "tsc --noEmit",
-    "migrate:local": "wrangler d1 execute share-all-db --local --file=migrations/0001_init.sql && wrangler d1 execute share-all-db --local --file=migrations/0002_theme_settings.sql && wrangler d1 execute share-all-db --local --file=migrations/0003_participant_display.sql && wrangler d1 execute share-all-db --local --file=migrations/0004_media_derivatives.sql && wrangler d1 execute share-all-db --local --file=migrations/0005_derivatives_provider.sql",
-    "migrate:local:0004-0005": "wrangler d1 execute share-all-db --local --file=migrations/0004_media_derivatives.sql && wrangler d1 execute share-all-db --local --file=migrations/0005_derivatives_provider.sql"
+    "migrate:local": "wrangler d1 execute share-photo-db --local --file=migrations/0001_init.sql && wrangler d1 execute share-photo-db --local --file=migrations/0002_theme_settings.sql && wrangler d1 execute share-photo-db --local --file=migrations/0003_participant_display.sql && wrangler d1 execute share-photo-db --local --file=migrations/0004_media_derivatives.sql && wrangler d1 execute share-photo-db --local --file=migrations/0005_derivatives_provider.sql",
+    "migrate:local:0004-0005": "wrangler d1 execute share-photo-db --local --file=migrations/0004_media_derivatives.sql && wrangler d1 execute share-photo-db --local --file=migrations/0005_derivatives_provider.sql"
   },
   "dependencies": {
     "hono": "^4.6.0"
