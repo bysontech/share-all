@@ -186,7 +186,6 @@ function AdminTop({ onLogout }: { onLogout: () => void }) {
               <tr style={{ textAlign: 'left', borderBottom: '2px solid #ccc' }}>
                 <th style={{ padding: '8px 6px' }}>ルーム名</th>
                 <th style={{ padding: '8px 6px' }}>作成日</th>
-                <th style={{ padding: '8px 6px' }}>有効期限</th>
                 <th style={{ padding: '8px 6px' }}>投稿数</th>
                 <th style={{ padding: '8px 6px' }}>リンク</th>
                 <th style={{ padding: '8px 6px' }}></th>
@@ -198,9 +197,6 @@ function AdminTop({ onLogout }: { onLogout: () => void }) {
                   <td style={{ padding: '8px 6px' }}>{room.name}</td>
                   <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>
                     {new Date(room.createdAt * 1000).toLocaleDateString('ja-JP')}
-                  </td>
-                  <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>
-                    {new Date(room.expiresAt * 1000).toLocaleDateString('ja-JP')}
                   </td>
                   <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>
                     {room.postCount}件（画像{room.imageCount} / 動画{room.videoCount}）

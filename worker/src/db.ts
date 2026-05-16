@@ -15,8 +15,6 @@ export async function getRoomAndValidate(
 ): Promise<{ room: Room } | { error: string; status: number }> {
   const room = await getRoom(db, roomId);
   if (!room) return { error: 'Room not found', status: 404 };
-  const now = Math.floor(Date.now() / 1000);
-  if (room.expires_at < now) return { error: 'Room has expired', status: 410 };
   return { room };
 }
 

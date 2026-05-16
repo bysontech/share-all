@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
-import { uuid, nowSec } from '../utils';
+import { uuid, nowSec, ROOM_EXPIRES_AT_PLACEHOLDER_SEC } from '../utils';
 import { ADMIN_SESSION_COOKIE, verifyAdminSiteSession } from '../adminSession';
 
 type ParamRoomId = { roomId: string };
@@ -126,7 +126,6 @@ admin.get('/rooms', async (c) => {
     name: string;
     description: string | null;
     created_at: number;
-    expires_at: number;
   };
   type CountRow = {
     room_id: string;
@@ -137,7 +136,7 @@ admin.get('/rooms', async (c) => {
 
   const [roomsResult, countsResult] = await Promise.all([
     c.env.DB.prepare(
-      'SELECT id, name, description, created_at, expires_at FROM rooms ORDER BY created_at DESC'
+      'SELECT id, name, description, created_at FROM rooms ORDER BY created_at DESC'
     ).all<RoomRow>(),
     c.env.DB.prepare(
       `SELECT room_id,
@@ -159,7 +158,6 @@ admin.get('/rooms', async (c) => {
       name: r.name,
       description: r.description,
       createdAt: r.created_at,
-      expiresAt: r.expires_at,
       participantUrl: `${frontendUrl}/room/${r.id}`,
       adminUrl: `${frontendUrl}/admin/${r.id}`,
       postCount: cnt?.total ?? 0,
@@ -184,12 +182,19 @@ admin.post('/rooms', async (c) => {
   const roomId = uuid();
   const hostToken = uuid();
   const now = nowSec();
-  const expiresAt = now + 30 * 24 * 60 * 60;
 
   await c.env.DB.prepare(
     'INSERT INTO rooms (id, name, passcode, host_token, description, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
-    .bind(roomId, body.name.trim(), body.passcode ?? null, hostToken, body.description ?? null, expiresAt, now)
+    .bind(
+      roomId,
+      body.name.trim(),
+      body.passcode ?? null,
+      hostToken,
+      body.description ?? null,
+      ROOM_EXPIRES_AT_PLACEHOLDER_SEC,
+      now
+    )
     .run();
 
   await c.env.DB.prepare(
@@ -205,7 +210,6 @@ admin.post('/rooms', async (c) => {
       hostToken,
       participantUrl: `${frontendUrl}/room/${roomId}`,
       adminUrl: `${frontendUrl}/admin/${roomId}`,
-      expiresAt,
     },
     201
   );

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
-import { uuid, nowSec, err } from '../utils';
+import { uuid, nowSec, err, ROOM_EXPIRES_AT_PLACEHOLDER_SEC } from '../utils';
 import { getRoomAndValidate } from '../db';
 import { authorizeRoomManage } from '../roomManageAuth';
 
@@ -17,12 +17,19 @@ rooms.post('/', async (c) => {
   const roomId = uuid();
   const hostToken = uuid();
   const now = nowSec();
-  const expiresAt = now + 30 * 24 * 60 * 60;
 
   await c.env.DB.prepare(
     'INSERT INTO rooms (id, name, passcode, host_token, description, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
-    .bind(roomId, body.name.trim(), body.passcode ?? null, hostToken, body.description ?? null, expiresAt, now)
+    .bind(
+      roomId,
+      body.name.trim(),
+      body.passcode ?? null,
+      hostToken,
+      body.description ?? null,
+      ROOM_EXPIRES_AT_PLACEHOLDER_SEC,
+      now
+    )
     .run();
 
   await c.env.DB.prepare(
@@ -34,7 +41,7 @@ rooms.post('/', async (c) => {
   const frontendUrl = c.env.FRONTEND_URL ?? '';
   const participantUrl = `${frontendUrl}/room/${roomId}`;
 
-  return c.json({ roomId, hostToken, participantUrl, expiresAt }, 201);
+  return c.json({ roomId, hostToken, participantUrl }, 201);
 });
 
 rooms.get('/:roomId', async (c) => {
@@ -48,7 +55,6 @@ rooms.get('/:roomId', async (c) => {
     name: room.name,
     hasPasscode: !!room.passcode,
     description: room.description,
-    expiresAt: room.expires_at,
   });
 });
 

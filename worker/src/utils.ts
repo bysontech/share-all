@@ -6,6 +6,9 @@ export function nowSec(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+/** `rooms.expires_at` is NOT NULL; app does not enforce room expiry—this is a DB placeholder only. */
+export const ROOM_EXPIRES_AT_PLACEHOLDER_SEC = 4102444800; // ~2100-01-01 UTC
+
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,

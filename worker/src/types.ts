@@ -28,6 +28,7 @@ export interface Room {
   passcode: string | null;
   host_token: string;
   description: string | null;
+  /** Legacy NOT NULL column; not used for access control (see ROOM_EXPIRES_AT_PLACEHOLDER_SEC). */
   expires_at: number;
   created_at: number;
 }

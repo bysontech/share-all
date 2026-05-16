@@ -46,7 +46,6 @@ export interface CreateRoomResponse {
   roomId: string;
   hostToken: string;
   participantUrl: string;
-  expiresAt: number;
 }
 
 export interface RoomInfo {
@@ -54,7 +53,6 @@ export interface RoomInfo {
   name: string;
   hasPasscode: boolean;
   description: string | null;
-  expiresAt: number;
 }
 
 export interface SlideshowSettings {
@@ -272,7 +270,6 @@ export interface AdminRoomItem {
   name: string;
   description: string | null;
   createdAt: number;
-  expiresAt: number;
   participantUrl: string;
   adminUrl: string;
   postCount: number;
@@ -285,7 +282,6 @@ export interface AdminCreateRoomResponse {
   hostToken: string;
   participantUrl: string;
   adminUrl: string;
-  expiresAt: number;
 }
 
 export const adminApi = {

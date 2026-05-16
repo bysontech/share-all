@@ -413,7 +413,6 @@ export default function AdminPage() {
 
   if (!room) return <div style={{ padding: 24 }}>読み込み中...</div>;
 
-  const expiresDate = new Date(room.expiresAt * 1000).toLocaleDateString('ja-JP');
   const visibleCount = posts.filter((p) => p.status === 'visible').length;
   const hiddenCount = posts.filter((p) => p.status === 'hidden').length;
 
@@ -437,7 +436,6 @@ export default function AdminPage() {
           サイトの管理へ
         </Link>
       </div>
-      <p style={{ fontSize: 13, color: '#888', margin: '0 0 20px' }}>有効期限: {expiresDate}</p>
 
       {/* Participant URL */}
       <section style={{ background: '#f5f5f5', borderRadius: 4, padding: 14, marginBottom: 24 }}>
