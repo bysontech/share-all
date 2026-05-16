@@ -20,6 +20,12 @@ export interface Env {
   ADMIN_SESSION_SECRET?: string;
   /** Max-Age in seconds for the admin session cookie (default: 86400). */
   ADMIN_SESSION_MAX_AGE?: string;
+  /** SHA-256 hex of the admin entry token. Set via wrangler secret. */
+  ADMIN_ENTRY_TOKEN_HASH?: string;
+  /** HMAC-SHA256 key for signing admin entry cookies. Set via wrangler secret. */
+  ADMIN_ENTRY_SESSION_SECRET?: string;
+  /** Max-Age in seconds for the admin entry cookie (default: 1800 = 30 min). */
+  ADMIN_ENTRY_SESSION_MAX_AGE?: string;
 }
 
 export interface Room {

@@ -5,6 +5,7 @@ import rooms from './routes/rooms';
 import posts from './routes/posts';
 import theme from './routes/theme';
 import admin from './routes/admin';
+import internal from './routes/internal';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -25,6 +26,7 @@ app.route('/api/rooms', rooms);
 app.route('/api/rooms/:roomId/posts', posts);
 app.route('/api/rooms/:roomId/theme', theme);
 app.route('/api/admin', admin);
+app.route('/internal', internal);
 
 app.get('/health', (c) => c.json({ ok: true }));
 
