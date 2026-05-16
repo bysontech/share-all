@@ -69,7 +69,7 @@ async function issueSessionCookie(secret: string, maxAge: number, secure: boolea
 }
 
 async function verifySession(env: Env, cookieHeader: string | undefined): Promise<boolean> {
-  const secret = env.ADMIN_SESSION_SECRET;
+  const secret = env.ADMIN_SESSION_SECRET?.trim();
   if (!secret) return false;
   const raw = parseCookie(cookieHeader, COOKIE_NAME);
   if (!raw) return false;
@@ -97,10 +97,19 @@ async function requireAdmin(c: { env: Env; req: { header: (name: string) => stri
 
 // POST /api/admin/login
 admin.post('/login', async (c) => {
-  const passwordHash = c.env.ADMIN_PASSWORD_HASH;
-  const secret = c.env.ADMIN_SESSION_SECRET;
-  if (!passwordHash || !secret) {
+  const passwordHashRaw = c.env.ADMIN_PASSWORD_HASH?.trim();
+  const secret = c.env.ADMIN_SESSION_SECRET?.trim();
+  if (!passwordHashRaw || !secret) {
     return c.json({ error: 'Admin not configured' }, 503);
+  }
+
+  // Plain SHA-256 of UTF-8 password, lowercase hex (64 chars). Wrong format → env misconfigured.
+  const passwordHash = passwordHashRaw.toLowerCase().replace(/^0x/, '');
+  if (!/^[a-f0-9]{64}$/.test(passwordHash)) {
+    return c.json({
+      error: 'Admin misconfigured',
+      hint: 'ADMIN_PASSWORD_HASH must be SHA-256 hex (64 lowercase hex chars)',
+    }, 503);
   }
 
   const body = await c.req.json<{ password?: string }>();
@@ -109,7 +118,7 @@ admin.post('/login', async (c) => {
   }
 
   const inputHash = await sha256Hex(body.password);
-  if (!timingSafeEqual(inputHash, passwordHash.toLowerCase())) {
+  if (!timingSafeEqual(inputHash, passwordHash)) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
