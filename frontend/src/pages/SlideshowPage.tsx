@@ -111,8 +111,8 @@ export default function SlideshowPage() {
     orderMode: 'asc',
   });
 
-  // Posts polling
-  const { posts, error: pollError } = usePostsPolling(roomId);
+  // Posts polling — only slideshow-purpose posts
+  const { posts, error: pollError } = usePostsPolling(roomId, 'slideshow');
 
   const imagePosts = posts
     .filter((p) => p.file_type === 'image')

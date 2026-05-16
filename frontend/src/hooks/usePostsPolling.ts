@@ -7,7 +7,7 @@ import type { Post } from '../api/client';
 const BACKOFF_STEPS_MS = [5_000, 10_000, 15_000, 30_000];
 const TAB_HIDDEN_MS = 60_000;
 
-export function usePostsPolling(roomId: string | undefined) {
+export function usePostsPolling(roomId: string | undefined, postPurpose?: 'slideshow' | 'album' | 'video') {
   const [posts, setPosts] = useState<Post[]>([]);
   const [error, setError] = useState('');
   const serverTimeRef = useRef<number | undefined>(undefined);
@@ -50,7 +50,7 @@ export function usePostsPolling(roomId: string | undefined) {
       fetchingRef.current = true;
       const t0 = Date.now();
       try {
-        const res = await api.getPosts(roomId!, serverTimeRef.current);
+        const res = await api.getPosts(roomId!, serverTimeRef.current, postPurpose);
         if (cancelledRef.current) return;
 
         const hadNew = mergePosts(res.posts);
@@ -105,7 +105,7 @@ export function usePostsPolling(roomId: string | undefined) {
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [roomId, mergePosts]);
+  }, [roomId, postPurpose, mergePosts]);
 
   return { posts, error, addPost };
 }
