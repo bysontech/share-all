@@ -3,21 +3,107 @@ import { useParams, Link } from 'react-router-dom';
 import { api, ApiError, resolvePublicMediaUrl, type Post, type SlideshowSettings } from '../api/client';
 import { usePostsPolling } from '../hooks/usePostsPolling';
 
-const VIEW_URL_REFRESH_BEFORE_EXPIRY = 120; // 有効期限の2分前に再取得
+const FADE_MS = 600;
+const CONTROLS_HIDE_MS = 3000;
+const VIEW_URL_REFRESH_BEFORE_EXPIRY = 120;
 
-/** HEIC/HEIF は環境によって img 表示が失敗しやすい */
-function isHeicMime(mime: string | undefined): boolean {
-  return mime === 'image/heic' || mime === 'image/heif';
+// ── Helpers ──
+
+/** Preloads an image URL (including decode if available). Never rejects. */
+function preloadImage(url: string): Promise<void> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => (img.decode ? img.decode().then(resolve).catch(resolve) : resolve());
+    img.onerror = () => resolve();
+    img.src = url;
+  });
 }
 
-interface ViewUrlCache {
-  urls: Record<string, string>;
-  expiresAt: number;
+/** Waits two animation frames to ensure React has committed a render. */
+function raf2(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ── Types ──
+
+interface DisplayLayer {
+  postId: string;
+  url: string;
+  post: Post;
+}
+
+// ── Sub-components ──
+
+function CtrlBtn({
+  children,
+  onClick,
+  disabled,
+  title,
+  size,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+  size?: number;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      style={{
+        background: 'rgba(255,255,255,0.15)',
+        border: 'none',
+        color: disabled ? '#555' : '#fff',
+        fontSize: size ?? 28,
+        padding: '10px 16px',
+        cursor: disabled ? 'default' : 'pointer',
+        borderRadius: 8,
+        lineHeight: 1,
+        minWidth: 48,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SideNav({ side, onClick }: { side: 'left' | 'right'; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        position: 'absolute',
+        top: '50%',
+        [side]: 12,
+        transform: 'translateY(-50%)',
+        background: 'rgba(255,255,255,0.08)',
+        border: 'none',
+        color: '#fff',
+        fontSize: 40,
+        padding: '24px 14px',
+        cursor: 'pointer',
+        borderRadius: 6,
+        lineHeight: 1,
+        userSelect: 'none',
+      }}
+    >
+      {side === 'left' ? '‹' : '›'}
+    </button>
+  );
+}
+
+// ── Main component ──
 
 export default function SlideshowPage() {
   const { roomId } = useParams<{ roomId: string }>();
 
+  // Room settings
   const [roomError, setRoomError] = useState('');
   const [settings, setSettings] = useState<SlideshowSettings>({
     intervalSeconds: 5,
@@ -25,39 +111,39 @@ export default function SlideshowPage() {
     orderMode: 'asc',
   });
 
+  // Posts polling
   const { posts, error: pollError } = usePostsPolling(roomId);
-  // All image posts (used for URL fetching)
+
   const imagePosts = posts
     .filter((p) => p.file_type === 'image')
     .sort((a, b) =>
-      settings.orderMode === 'desc'
-        ? b.created_at - a.created_at
-        : a.created_at - b.created_at
+      settings.orderMode === 'desc' ? b.created_at - a.created_at : a.created_at - b.created_at
     );
 
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [viewUrlCache, setViewUrlCache] = useState<ViewUrlCache>({ urls: {}, expiresAt: 0 });
-  const [urlLoading, setUrlLoading] = useState(false);
-  const [imageLoadError, setImageLoadError] = useState(false);
+  // View URL cache
+  const [viewUrlCache, setViewUrlCache] = useState<{ urls: Record<string, string>; expiresAt: number }>({
+    urls: {},
+    expiresAt: 0,
+  });
   const viewUrlCacheRef = useRef(viewUrlCache);
   viewUrlCacheRef.current = viewUrlCache;
-
-  // Only posts that have a display URL — excludes HEIC without a derivative
-  const displayablePosts = viewUrlCache.expiresAt > 0
-    ? imagePosts.filter((p) => viewUrlCache.urls[p.id])
-    : imagePosts;
-
   const imagePostsRef = useRef<Post[]>([]);
   imagePostsRef.current = imagePosts;
 
-  // Reset index when new posts arrive and index is out of bounds
-  useEffect(() => {
-    if (currentIndex >= displayablePosts.length && displayablePosts.length > 0) {
-      setCurrentIndex(0);
-    }
-  }, [imagePosts.length, currentIndex]);
+  // Only posts that have a slideshow URL
+  const displayablePosts =
+    viewUrlCache.expiresAt > 0
+      ? imagePosts.filter((p) => viewUrlCache.urls[p.id])
+      : imagePosts;
+  const displayablePostsRef = useRef<Post[]>([]);
+  displayablePostsRef.current = displayablePosts;
 
-  // Load room info and settings
+  // Current index (tracks where we are in displayablePosts)
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const currentIndexRef = useRef(0);
+  currentIndexRef.current = currentIndex;
+
+  // ── Room init ──
   useEffect(() => {
     if (!roomId) return;
     Promise.all([api.getRoom(roomId), api.getSlideshowSettings(roomId)])
@@ -67,247 +153,475 @@ export default function SlideshowPage() {
       );
   }, [roomId]);
 
-  // Fetch viewUrls for current posts
+  // ── View URL fetching ──
   const fetchViewUrls = useCallback(async () => {
     if (!roomId) return;
-    const posts = imagePostsRef.current;
-    if (posts.length === 0) return;
-
+    const imgPosts = imagePostsRef.current;
+    if (imgPosts.length === 0) return;
     const now = Math.floor(Date.now() / 1000);
     const cache = viewUrlCacheRef.current;
     const needsRefresh =
       cache.expiresAt - now < VIEW_URL_REFRESH_BEFORE_EXPIRY ||
-      posts.some((p) => !(p.id in cache.urls));
-
+      imgPosts.some((p) => !(p.id in cache.urls));
     if (!needsRefresh) return;
-
-    setUrlLoading(true);
     try {
-      const res = await api.getViewUrls(roomId, posts.map((p) => p.id), undefined, 'slideshow');
+      const res = await api.getViewUrls(roomId, imgPosts.map((p) => p.id), undefined, 'slideshow');
       setViewUrlCache({ urls: res.viewUrls, expiresAt: res.expiresAt });
-    } catch (_e) {
-      // non-fatal: keep showing existing URLs if any
-    } finally {
-      setUrlLoading(false);
+    } catch {
+      /* non-fatal */
     }
   }, [roomId]);
 
-  // Refresh viewUrls when posts change or periodically
   useEffect(() => {
     fetchViewUrls();
   }, [imagePosts.length, fetchViewUrls]);
-
   useEffect(() => {
-    const timer = setInterval(fetchViewUrls, 60_000);
-    return () => clearInterval(timer);
+    const t = setInterval(fetchViewUrls, 60_000);
+    return () => clearInterval(t);
   }, [fetchViewUrls]);
 
-  // Slideshow auto-advance (based on displayable posts)
+  // ── Crossfade layer state ──
+  //   curLayer: the image always visible
+  //   nxtLayer: the image being faded in (only present during a transition)
+  //   nxtShown: when true, CSS transitions opacity (cur→0, nxt→1)
+  const [curLayer, setCurLayer] = useState<DisplayLayer | null>(null);
+  const [nxtLayer, setNxtLayer] = useState<DisplayLayer | null>(null);
+  const [nxtShown, setNxtShown] = useState(false);
+  const curLayerRef = useRef<DisplayLayer | null>(null);
+  curLayerRef.current = curLayer;
+
+  const transitioningRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    []
+  );
+
+  // ── Core: transition to a specific index ──
+  const transitionTo = useCallback(async (idx: number) => {
+    if (transitioningRef.current) return;
+    const dPosts = displayablePostsRef.current;
+    if (dPosts.length === 0) return;
+
+    const safeIdx = ((idx % dPosts.length) + dPosts.length) % dPosts.length;
+    const post = dPosts[safeIdx];
+    const rawUrl = viewUrlCacheRef.current.urls[post.id];
+
+    // If no URL, advance index silently
+    if (!rawUrl) {
+      setCurrentIndex(safeIdx);
+      return;
+    }
+    const url = resolvePublicMediaUrl(rawUrl);
+
+    // Skip if already showing this image
+    if (curLayerRef.current?.postId === post.id) return;
+
+    transitioningRef.current = true;
+
+    // Stage the next layer at opacity 0
+    setNxtLayer({ postId: post.id, url, post });
+    setNxtShown(false);
+
+    // Preload the image before starting the fade
+    await preloadImage(url);
+    if (!mountedRef.current) {
+      transitioningRef.current = false;
+      return;
+    }
+
+    // Wait for React to render nxt at opacity:0 before starting transition
+    await raf2();
+    if (!mountedRef.current) {
+      transitioningRef.current = false;
+      return;
+    }
+
+    // Trigger crossfade
+    setNxtShown(true);
+
+    await sleep(FADE_MS);
+    if (!mountedRef.current) {
+      transitioningRef.current = false;
+      return;
+    }
+
+    // Swap: nxt becomes cur, clear nxt
+    setCurLayer({ postId: post.id, url, post });
+    setNxtLayer(null);
+    setNxtShown(false);
+    setCurrentIndex(safeIdx);
+    transitioningRef.current = false;
+  }, []);
+
+  // ── Initial display: show first image without animation ──
+  const initializedRef = useRef(false);
   useEffect(() => {
-    if (displayablePosts.length <= 1) return;
-    const timer = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % displayablePosts.length);
+    if (initializedRef.current) return;
+    const dPosts = displayablePostsRef.current;
+    if (dPosts.length === 0 || viewUrlCacheRef.current.expiresAt === 0) return;
+    const post = dPosts[0];
+    const rawUrl = viewUrlCacheRef.current.urls[post.id];
+    if (!rawUrl) return;
+    initializedRef.current = true;
+    setCurLayer({ postId: post.id, url: resolvePublicMediaUrl(rawUrl), post });
+    setCurrentIndex(0);
+  }, [displayablePosts.length, viewUrlCache.expiresAt]); // reads from refs inside
+
+  // Reset index if displayable list shrinks
+  useEffect(() => {
+    if (displayablePosts.length > 0 && currentIndexRef.current >= displayablePosts.length) {
+      setCurrentIndex(0);
+    }
+  }, [displayablePosts.length]);
+
+  // ── Preload next image in background ──
+  useEffect(() => {
+    const dPosts = displayablePostsRef.current;
+    if (dPosts.length <= 1) return;
+    const nextPost = dPosts[(currentIndexRef.current + 1) % dPosts.length];
+    if (!nextPost) return;
+    const rawUrl = viewUrlCacheRef.current.urls[nextPost.id];
+    if (!rawUrl) return;
+    preloadImage(resolvePublicMediaUrl(rawUrl)).catch(() => {});
+  }, [currentIndex, viewUrlCache.expiresAt]);
+
+  // ── Playback ──
+  const [isPlaying, setIsPlaying] = useState(true);
+  const isPlayingRef = useRef(true);
+  isPlayingRef.current = isPlaying;
+
+  useEffect(() => {
+    if (!isPlaying || displayablePosts.length <= 1) return;
+    const t = setInterval(() => {
+      if (!isPlayingRef.current) return;
+      const dPosts = displayablePostsRef.current;
+      transitionTo((currentIndexRef.current + 1) % dPosts.length);
     }, settings.intervalSeconds * 1000);
-    return () => clearInterval(timer);
-  }, [settings.intervalSeconds, displayablePosts.length]);
+    return () => clearInterval(t);
+  }, [isPlaying, settings.intervalSeconds, displayablePosts.length, transitionTo]);
 
-  const currentPost = displayablePosts[currentIndex];
-  const currentUrl = currentPost ? viewUrlCache.urls[currentPost.id] : undefined;
+  // ── Controls auto-hide ──
+  const [showControls, setShowControls] = useState(true);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetHideTimer = useCallback(() => {
+    setShowControls(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => setShowControls(false), CONTROLS_HIDE_MS);
+  }, []);
 
   useEffect(() => {
-    setImageLoadError(false);
-  }, [currentPost?.id, currentUrl]);
+    resetHideTimer();
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, [resetHideTimer]);
 
+  // ── Navigation ──
+  const goNext = useCallback(() => {
+    const dPosts = displayablePostsRef.current;
+    if (dPosts.length === 0) return;
+    transitionTo((currentIndexRef.current + 1) % dPosts.length);
+    resetHideTimer();
+  }, [transitionTo, resetHideTimer]);
+
+  const goPrev = useCallback(() => {
+    const dPosts = displayablePostsRef.current;
+    if (dPosts.length === 0) return;
+    transitionTo((currentIndexRef.current - 1 + dPosts.length) % dPosts.length);
+    resetHideTimer();
+  }, [transitionTo, resetHideTimer]);
+
+  const togglePlay = useCallback(() => {
+    setIsPlaying((p) => !p);
+    resetHideTimer();
+  }, [resetHideTimer]);
+
+  // ── Fullscreen ──
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const h = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', h);
+    return () => document.removeEventListener('fullscreenchange', h);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    (document.fullscreenElement ? document.exitFullscreen() : el.requestFullscreen()).catch(
+      () => {}
+    );
+    resetHideTimer();
+  }, [resetHideTimer]);
+
+  // ── Keyboard shortcuts ──
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') {
+        goNext();
+        e.preventDefault();
+      } else if (e.key === 'ArrowLeft') {
+        goPrev();
+        e.preventDefault();
+      } else if (e.key === ' ') {
+        togglePlay();
+        e.preventDefault();
+      } else {
+        resetHideTimer();
+      }
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [goNext, goPrev, togglePlay, resetHideTimer]);
+
+  // ── Touch swipe ──
+  const touchStartXRef = useRef<number | null>(null);
+
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      touchStartXRef.current = e.touches[0].clientX;
+      resetHideTimer();
+    },
+    [resetHideTimer]
+  );
+
+  const handleTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      if (touchStartXRef.current === null) return;
+      const dx = e.changedTouches[0].clientX - touchStartXRef.current;
+      touchStartXRef.current = null;
+      if (Math.abs(dx) > 50) {
+        dx < 0 ? goNext() : goPrev();
+        e.preventDefault();
+      }
+    },
+    [goNext, goPrev]
+  );
+
+  // ── Error state ──
   if (roomError) {
     return (
       <div
         style={{
-          minHeight: '100vh',
-          background: '#111',
+          width: '100vw',
+          height: '100vh',
+          background: '#000',
           color: '#fff',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
           gap: 16,
+          fontFamily: 'sans-serif',
         }}
       >
         <p style={{ color: '#f88' }}>{roomError}</p>
-        <Link to="/" style={{ color: '#aaf' }}>
-          トップへ戻る
+        <Link to={`/room/${roomId}`} style={{ color: '#aaf' }}>
+          ← 戻る
         </Link>
       </div>
     );
   }
 
+  // ── Derived render values ──
+  // cur fades out when nxt is fading in; transition only active when nxtLayer present
+  const curOpacity = nxtShown ? 0 : 1;
+  const nxtOpacity = nxtShown ? 1 : 0;
+  const activePost = curLayer?.post ?? displayablePosts[currentIndex] ?? null;
+
+  // ── Render ──
   return (
     <div
+      ref={containerRef}
       style={{
-        minHeight: '100vh',
-        background: '#111',
-        color: '#fff',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
+        width: '100vw',
+        height: '100vh',
+        background: '#000',
         overflow: 'hidden',
+        position: 'relative',
+        cursor: showControls ? 'default' : 'none',
+        userSelect: 'none',
       }}
+      onMouseMove={resetHideTimer}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
     >
-      {/* Top bar */}
+      {/* ── Empty state ── */}
+      {displayablePosts.length === 0 && !curLayer && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#555',
+            fontFamily: 'sans-serif',
+            pointerEvents: 'none',
+          }}
+        >
+          <p style={{ fontSize: 18, marginBottom: 8 }}>まだ表示できる写真がありません</p>
+          <p style={{ fontSize: 14 }}>写真が投稿されるとここに表示されます</p>
+        </div>
+      )}
+
+      {/* ── Current image layer (always visible until fully replaced) ── */}
+      {curLayer && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            opacity: curOpacity,
+            // Only enable CSS transition when a next layer is actively fading in
+            transition: nxtLayer ? `opacity ${FADE_MS}ms ease-in-out` : 'none',
+            zIndex: 1,
+          }}
+        >
+          <img
+            src={curLayer.url}
+            alt=""
+            draggable={false}
+            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+          />
+        </div>
+      )}
+
+      {/* ── Next image layer (only present during transition, fades in on top) ── */}
+      {nxtLayer && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            opacity: nxtOpacity,
+            transition: `opacity ${FADE_MS}ms ease-in-out`,
+            zIndex: 2,
+          }}
+        >
+          <img
+            src={nxtLayer.url}
+            alt=""
+            draggable={false}
+            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+          />
+        </div>
+      )}
+
+      {/* ── Controls overlay: fades in/out on activity ── */}
       <div
         style={{
           position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
+          inset: 0,
+          opacity: showControls ? 1 : 0,
+          transition: 'opacity 400ms ease',
+          pointerEvents: showControls ? 'auto' : 'none',
           zIndex: 10,
-          padding: '10px 16px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          background: 'rgba(0,0,0,0.4)',
         }}
       >
-        <Link
-          to={`/room/${roomId}`}
-          style={{ color: '#ccc', textDecoration: 'none', fontSize: 13 }}
+        {/* Top gradient + back link + counter */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            padding: '16px 20px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            background: 'linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%)',
+          }}
         >
-          ← 戻る
-        </Link>
-        <span style={{ fontSize: 13, color: '#aaa' }}>
-          {displayablePosts.length > 0
-            ? `${currentIndex + 1} / ${displayablePosts.length}`
-            : ''}
-          {pollError && <span style={{ marginLeft: 8, color: '#f88', fontSize: 11 }}>更新エラー</span>}
-          {urlLoading && <span style={{ marginLeft: 8, color: '#aaa', fontSize: 11 }}>URL取得中</span>}
-        </span>
-      </div>
+          <Link
+            to={`/room/${roomId}`}
+            style={{
+              color: '#ddd',
+              textDecoration: 'none',
+              fontSize: 15,
+              padding: '4px 0',
+              fontFamily: 'sans-serif',
+            }}
+          >
+            ← 戻る
+          </Link>
+          <span style={{ fontSize: 13, color: '#bbb', fontFamily: 'sans-serif' }}>
+            {displayablePosts.length > 0
+              ? `${currentIndex + 1} / ${displayablePosts.length}`
+              : ''}
+            {pollError && (
+              <span style={{ marginLeft: 8, color: '#f88', fontSize: 11 }}>更新エラー</span>
+            )}
+          </span>
+        </div>
 
-      {/* Main display */}
-      <div
-        style={{
-          flex: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '60px 0 40px',
-        }}
-      >
-        {displayablePosts.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#666' }}>
-            <p style={{ fontSize: 20, marginBottom: 8 }}>
-              {urlLoading ? '読み込み中...' : 'まだ表示できる写真がありません'}
-            </p>
-            <p style={{ fontSize: 14 }}>写真が投稿されるとここに表示されます</p>
-          </div>
-        ) : currentUrl ? (
-          imageLoadError ? (
-            <div style={{ textAlign: 'center', color: '#aaa', maxWidth: 420, padding: 16, lineHeight: 1.6 }}>
-              {isHeicMime(currentPost?.mime_type) ? (
-                <>
-                  <p style={{ fontSize: 16, marginBottom: 8, color: '#c88' }}>
-                    HEIC / HEIF の表示に失敗しました
-                  </p>
-                  <p style={{ fontSize: 13, color: '#777' }}>
-                    iPhone の「設定 → カメラ → フォーマット」で互換性優先（JPEG）にするか、JPEG / PNG
-                    での投稿を試してください。
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p style={{ fontSize: 15, color: '#c88' }}>画像の表示に失敗しました</p>
-                  <p style={{ fontSize: 13, color: '#888', marginTop: 8 }}>
-                    ネットワークや形式を確認し、ページを再読み込みしてください。
-                  </p>
-                </>
-              )}
-            </div>
-          ) : (
-            <img
-              key={`${currentPost?.id}-${currentUrl}`}
-              src={resolvePublicMediaUrl(currentUrl)}
-              alt={currentPost?.nickname}
-              onError={() => setImageLoadError(true)}
-              style={{
-                maxWidth: '100%',
-                maxHeight: 'calc(100vh - 120px)',
-                objectFit: 'contain',
-                borderRadius: 4,
-              }}
-            />
-          )
-        ) : (
-          <div style={{ color: '#888', fontSize: 15, textAlign: 'center', padding: 24 }}>
-            {urlLoading ? '読み込み中...' : '準備中'}
-          </div>
-        )}
-      </div>
-
-      {/* Nickname overlay */}
-      {settings.showNickname && currentPost && (
+        {/* Bottom gradient + nickname + controls */}
         <div
           style={{
             position: 'absolute',
             bottom: 0,
             left: 0,
             right: 0,
-            padding: '12px 20px',
-            background: 'rgba(0,0,0,0.5)',
-            fontSize: 15,
-            color: '#fff',
+            padding: '16px 20px 28px',
+            background: 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 100%)',
+            fontFamily: 'sans-serif',
           }}
         >
-          {currentPost.nickname}
-          <span style={{ marginLeft: 12, fontSize: 12, color: '#aaa' }}>
-            {new Date(currentPost.created_at * 1000).toLocaleString('ja-JP')}
-          </span>
+          {settings.showNickname && activePost && (
+            <div
+              style={{
+                color: '#ccc',
+                fontSize: 14,
+                textAlign: 'center',
+                marginBottom: 14,
+              }}
+            >
+              {activePost.nickname}
+            </div>
+          )}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 12,
+            }}
+          >
+            <CtrlBtn onClick={goPrev} disabled={displayablePosts.length <= 1} title="前へ">
+              ‹
+            </CtrlBtn>
+            <CtrlBtn
+              onClick={togglePlay}
+              title={isPlaying ? '一時停止' : '再生'}
+              size={22}
+            >
+              {isPlaying ? '⏸' : '▶'}
+            </CtrlBtn>
+            <CtrlBtn onClick={goNext} disabled={displayablePosts.length <= 1} title="次へ">
+              ›
+            </CtrlBtn>
+            <CtrlBtn
+              onClick={toggleFullscreen}
+              title={isFullscreen ? '全画面解除' : '全画面'}
+              size={18}
+            >
+              {isFullscreen ? '⊡' : '⊞'}
+            </CtrlBtn>
+          </div>
         </div>
-      )}
 
-      {/* Manual nav */}
-      {displayablePosts.length > 1 && (
-        <>
-          <button
-            onClick={() =>
-              setCurrentIndex((prev) => (prev - 1 + displayablePosts.length) % displayablePosts.length)
-            }
-            style={{
-              position: 'absolute',
-              left: 8,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              background: 'rgba(255,255,255,0.15)',
-              border: 'none',
-              color: '#fff',
-              fontSize: 24,
-              padding: '12px 16px',
-              cursor: 'pointer',
-              borderRadius: 4,
-            }}
-          >
-            ‹
-          </button>
-          <button
-            onClick={() =>
-              setCurrentIndex((prev) => (prev + 1) % displayablePosts.length)
-            }
-            style={{
-              position: 'absolute',
-              right: 8,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              background: 'rgba(255,255,255,0.15)',
-              border: 'none',
-              color: '#fff',
-              fontSize: 24,
-              padding: '12px 16px',
-              cursor: 'pointer',
-              borderRadius: 4,
-            }}
-          >
-            ›
-          </button>
-        </>
-      )}
+        {/* Side navigation arrows */}
+        {displayablePosts.length > 1 && (
+          <>
+            <SideNav side="left" onClick={goPrev} />
+            <SideNav side="right" onClick={goNext} />
+          </>
+        )}
+      </div>
     </div>
   );
 }
