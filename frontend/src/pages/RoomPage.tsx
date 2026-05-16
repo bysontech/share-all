@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, ApiError, resolvePublicMediaUrl, type RoomInfo, type ThemeSettings } from '../api/client';
 import { useUploadQueue } from '../hooks/useUploadQueue';
@@ -14,6 +14,8 @@ const STATUS_LABEL: Record<QueueItem['status'], string> = {
   pending: '待機中', uploading: 'アップロード中',
   completing: '登録中', done: '完了', error: 'エラー',
 };
+
+const SLIDESHOW_MAX = 10;
 
 function useTheme(roomId: string | undefined) {
   const [theme, setTheme] = useState<ThemeSettings>(EMPTY_THEME);
@@ -45,6 +47,97 @@ function injectKeyframes() {
   document.head.appendChild(style);
 }
 
+// ---- Upload queue card ----
+
+interface UploadCardProps {
+  title: string;
+  desc: string;
+  accept: string;
+  items: QueueItem[];
+  summary: { total: number; active: number; done: number; error: number };
+  addFiles: (files: File[]) => void;
+  retryItem: (id: string) => void;
+  clearDone: () => void;
+  bgUrl: string;
+  primaryBtnStyle: React.CSSProperties;
+  cardStyle: React.CSSProperties;
+  textColor: string;
+  badge?: React.ReactNode;
+  doneHint?: string;
+}
+
+function UploadCard({
+  title, desc, accept, items, summary, addFiles, retryItem, clearDone,
+  bgUrl, primaryBtnStyle, cardStyle, textColor, badge, doneHint,
+}: UploadCardProps) {
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(e.target.files ?? []).filter(f =>
+      accept.split(',').some(a => f.type === a.trim())
+    );
+    if (selected.length) addFiles(selected);
+    e.target.value = '';
+  }
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>{title}</h3>
+        {badge}
+      </div>
+      <p style={{ margin: '0 0 12px', fontSize: 12, color: textColor, lineHeight: 1.5 }}>{desc}</p>
+
+      <label style={{ ...primaryBtnStyle, display: 'inline-block', marginBottom: 12, cursor: 'pointer' }}>
+        ファイルを選択
+        <input type="file" accept={accept} multiple onChange={handleFileChange} style={{ display: 'none' }} />
+      </label>
+
+      {summary.total > 0 && (
+        <div style={{ fontSize: 12, color: textColor, marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+          <span>全{summary.total}件</span>
+          {summary.active > 0 && <span>処理中: {summary.active}</span>}
+          {summary.done > 0 && <span>完了: {summary.done}</span>}
+          {summary.error > 0 && <span style={{ color: '#f88' }}>エラー: {summary.error}</span>}
+          {summary.done > 0 && (
+            <button onClick={clearDone} style={{ fontSize: 11, cursor: 'pointer', padding: '4px 8px', borderRadius: 3, minHeight: 28 }}>
+              完了を消す
+            </button>
+          )}
+        </div>
+      )}
+
+      {items.length > 0 && (
+        <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 8px' }}>
+          {items.map(item => (
+            <li key={item.id} style={{ padding: '6px 0', borderBottom: `1px solid ${bgUrl ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{
+                  width: 56, flexShrink: 0, fontSize: 11, padding: '4px', borderRadius: 3, textAlign: 'center',
+                  background: item.status === 'done' ? '#d4edda' : item.status === 'error' ? '#f8d7da' : item.status === 'pending' ? '#e2e3e5' : '#fff3cd',
+                  color: '#333',
+                }}>{STATUS_LABEL[item.status]}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
+                <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>{(item.file.size / 1024 / 1024).toFixed(1)}MB</span>
+                {item.status === 'error' && (
+                  <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '6px 10px', cursor: 'pointer', flexShrink: 0, minHeight: 32 }}>再試行</button>
+                )}
+              </div>
+              {item.status === 'error' && item.error && (
+                <p style={{ margin: '2px 0 0 64px', fontSize: 11, color: '#c00' }}>{item.error}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {summary.done > 0 && summary.active === 0 && doneHint && (
+        <p style={{ margin: '10px 0 0', fontSize: 12, color: textColor, opacity: 0.85 }}>{doneHint}</p>
+      )}
+    </div>
+  );
+}
+
+// ---- Main page ----
+
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   injectKeyframes();
@@ -61,10 +154,33 @@ export default function RoomPage() {
 
   const [participantId] = useState(() => roomId ? getOrCreateParticipantId(roomId) : '');
 
-  const { items, addFiles, retryItem, clearDone, summary } = useUploadQueue({
+  // Slideshow count
+  const [slideshowCount, setSlideshowCount] = useState<number | null>(null);
+
+  const handleSlideshowComplete = useCallback(() => {
+    setSlideshowCount(prev => prev !== null ? Math.min(prev + 1, SLIDESHOW_MAX) : null);
+  }, []);
+
+  const slideshowQueue = useUploadQueue({
     roomId: roomId ?? '',
     nickname,
     participantId,
+    postPurpose: 'slideshow',
+    onPostComplete: handleSlideshowComplete,
+  });
+
+  const albumQueue = useUploadQueue({
+    roomId: roomId ?? '',
+    nickname,
+    participantId,
+    postPurpose: 'album',
+  });
+
+  const videoQueue = useUploadQueue({
+    roomId: roomId ?? '',
+    nickname,
+    participantId,
+    postPurpose: 'video',
   });
 
   useEffect(() => {
@@ -77,24 +193,18 @@ export default function RoomPage() {
       .catch(e => setRoomError(e instanceof ApiError ? e.message : 'ルーム情報の取得に失敗しました'));
   }, [roomId]);
 
+  useEffect(() => {
+    if (!roomId || !participantId || !nickname) return;
+    api.getSlideshowCount(roomId, participantId)
+      .then(r => setSlideshowCount(r.count))
+      .catch(() => {});
+  }, [roomId, participantId, nickname]);
+
   function handleNicknameSubmit() {
     const n = nicknameInput.trim();
     if (!n) return;
     localStorage.setItem(nicknameKey, n);
     setNickname(n);
-  }
-
-  const ALLOWED_UPLOAD_TYPES = [
-    'image/jpeg', 'image/png', 'image/webp', 'image/heic',
-    'video/mp4', 'video/quicktime',
-  ];
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(e.target.files ?? []).filter(f =>
-      ALLOWED_UPLOAD_TYPES.includes(f.type)
-    );
-    if (selected.length) addFiles(selected);
-    e.target.value = '';
   }
 
   const accentColor = theme.themeColor ?? '#b8860b';
@@ -232,6 +342,22 @@ export default function RoomPage() {
     );
   }
 
+  const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/heic';
+  const VIDEO_ACCEPT = 'video/mp4,video/quicktime';
+
+  const displayedSlideshowCount = slideshowCount ?? 0;
+  const slideshowAtLimit = displayedSlideshowCount >= SLIDESHOW_MAX;
+
+  const slideshowCountBadge = (
+    <span style={{
+      fontSize: 12,
+      color: slideshowAtLimit ? '#f88' : textColor,
+      fontWeight: slideshowAtLimit ? 'bold' : 'normal',
+    }}>
+      {slideshowCount !== null ? `${displayedSlideshowCount}/${SLIDESHOW_MAX}枚` : ''}
+    </span>
+  );
+
   // ---- Main room view ----
   return (
     <div style={outerStyle}>
@@ -260,79 +386,100 @@ export default function RoomPage() {
           </p>
         </div>
 
-        {/* Upload card */}
-        <div style={cardStyle}>
-          <h3 style={{ margin: '0 0 14px', fontSize: 15, fontWeight: 'bold' }}>写真をシェア</h3>
-
-          <label style={{ ...primaryBtnStyle, background: accentColor, display: 'inline-block', marginBottom: 12 }}>
-            写真を選択
-            <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,video/mp4,video/quicktime" multiple
-              onChange={handleFileChange} style={{ display: 'none' }} />
-          </label>
-
-          {summary.total > 0 && (
-            <div style={{ fontSize: 12, color: textColor, marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-              <span>全{summary.total}件</span>
-              {summary.active > 0 && <span>処理中: {summary.active}</span>}
-              {summary.done > 0 && <span>完了: {summary.done}</span>}
-              {summary.error > 0 && <span style={{ color: '#f88' }}>エラー: {summary.error}</span>}
-              {summary.done > 0 && (
-                <button onClick={clearDone} style={{ fontSize: 11, cursor: 'pointer', padding: '4px 8px', borderRadius: 3, minHeight: 28 }}>
-                  完了を消す
-                </button>
-              )}
+        {/* Slideshow upload */}
+        {slideshowAtLimit ? (
+          <div style={{ ...cardStyle, opacity: 0.75 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>スライドショー用写真</h3>
+              {slideshowCountBadge}
             </div>
-          )}
-
-          {items.length > 0 && (
-            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 8px' }}>
-              {items.map(item => (
-                <li key={item.id} style={{ padding: '6px 0', borderBottom: `1px solid ${bgUrl ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{
-                      width: 56, flexShrink: 0, fontSize: 11, padding: '4px', borderRadius: 3, textAlign: 'center',
-                      background: item.status === 'done' ? '#d4edda' : item.status === 'error' ? '#f8d7da' : item.status === 'pending' ? '#e2e3e5' : '#fff3cd',
-                      color: '#333',
-                    }}>{STATUS_LABEL[item.status]}</span>
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
-                    <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>{(item.file.size / 1024 / 1024).toFixed(1)}MB</span>
-                    {item.status === 'error' && (
-                      <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '6px 10px', cursor: 'pointer', flexShrink: 0, minHeight: 32 }}>再試行</button>
-                    )}
-                  </div>
-                  {item.status === 'error' && item.error && (
-                    <p style={{ margin: '2px 0 0 64px', fontSize: 11, color: '#c00' }}>{item.error}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {/* Gallery hint after successful upload */}
-          {summary.done > 0 && summary.active === 0 && (
-            <p style={{ margin: '10px 0 0', fontSize: 12, color: textColor, opacity: 0.85 }}>
-              写真を共有しました。アルバムから確認できます。
+            <p style={{ margin: 0, fontSize: 12, color: '#f88' }}>
+              スライドショー写真は最大{SLIDESHOW_MAX}枚まで投稿できます。上限に達しました。
             </p>
-          )}
-        </div>
+          </div>
+        ) : (
+          <UploadCard
+            title="スライドショー用写真"
+            desc={`会場のスクリーンに映す写真を選んでください。最大${SLIDESHOW_MAX}枚まで投稿できます。`}
+            accept={IMAGE_ACCEPT}
+            items={slideshowQueue.items}
+            summary={slideshowQueue.summary}
+            addFiles={slideshowQueue.addFiles}
+            retryItem={slideshowQueue.retryItem}
+            clearDone={slideshowQueue.clearDone}
+            bgUrl={bgUrl}
+            primaryBtnStyle={primaryBtnStyle}
+            cardStyle={cardStyle}
+            textColor={textColor}
+            badge={slideshowCountBadge}
+            doneHint="スライドショーに追加されました。"
+          />
+        )}
 
-        {/* Album link card */}
+        {/* Album upload */}
+        <UploadCard
+          title="共有アルバム用写真"
+          desc="みんなで保存・共有する写真を投稿してください。"
+          accept={IMAGE_ACCEPT}
+          items={albumQueue.items}
+          summary={albumQueue.summary}
+          addFiles={albumQueue.addFiles}
+          retryItem={albumQueue.retryItem}
+          clearDone={albumQueue.clearDone}
+          bgUrl={bgUrl}
+          primaryBtnStyle={primaryBtnStyle}
+          cardStyle={cardStyle}
+          textColor={textColor}
+          doneHint="アルバムに追加されました。"
+        />
+
+        {/* Video upload */}
+        <UploadCard
+          title="動画"
+          desc="思い出の動画を共有してください（MP4・MOV）。"
+          accept={VIDEO_ACCEPT}
+          items={videoQueue.items}
+          summary={videoQueue.summary}
+          addFiles={videoQueue.addFiles}
+          retryItem={videoQueue.retryItem}
+          clearDone={videoQueue.clearDone}
+          bgUrl={bgUrl}
+          primaryBtnStyle={primaryBtnStyle}
+          cardStyle={cardStyle}
+          textColor={textColor}
+          doneHint="動画が共有されました。"
+        />
+
+        {/* Navigation links */}
         <div style={{ ...cardStyle, textAlign: 'center', marginBottom: 0 }}>
-          <p style={{ margin: '0 0 12px', fontSize: 13, color: textColor }}>
-            みんなの写真をまとめて見る・保存する
+          <p style={{ margin: '0 0 14px', fontSize: 13, color: textColor }}>
+            みんなの投稿を確認する
           </p>
-          <Link
-            to={`/room/${roomId}/gallery`}
-            style={{
-              ...primaryBtnStyle,
-              display: 'inline-block',
-              textDecoration: 'none',
-              fontSize: 15,
-              padding: '14px 32px',
-            }}
-          >
-            アルバムを見る
-          </Link>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Link
+              to={`/room/${roomId}/photos`}
+              style={{
+                ...primaryBtnStyle,
+                textDecoration: 'none',
+                fontSize: 14,
+                padding: '12px 24px',
+              }}
+            >
+              写真アルバム
+            </Link>
+            <Link
+              to={`/room/${roomId}/videos`}
+              style={{
+                ...primaryBtnStyle,
+                background: '#555',
+                textDecoration: 'none',
+                fontSize: 14,
+                padding: '12px 24px',
+              }}
+            >
+              動画一覧
+            </Link>
+          </div>
         </div>
       </div>
     </div>

@@ -124,10 +124,11 @@ interface UseUploadQueueOptions {
   roomId: string;
   nickname: string;
   participantId?: string;
+  postPurpose?: 'slideshow' | 'album' | 'video';
   onPostComplete?: (post: Post) => void;
 }
 
-export function useUploadQueue({ roomId, nickname, participantId, onPostComplete }: UseUploadQueueOptions) {
+export function useUploadQueue({ roomId, nickname, participantId, postPurpose, onPostComplete }: UseUploadQueueOptions) {
   const [items, setItems] = useState<QueueItem[]>([]);
   const runningRef = useRef(0);
   const runningVideosRef = useRef(0);
@@ -166,6 +167,8 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
             fileName: item.file.name,
             mimeType: item.file.type,
             fileSize: item.file.size,
+            postPurpose,
+            participantId: postPurpose === 'slideshow' ? participantId : undefined,
           });
           postId = res.postId;
           uploadUrl = res.uploadUrl;
@@ -246,6 +249,7 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
           sort_order: null,
           participant_id: participantId ?? null,
           display_file_key: displayFileKey ?? null,
+          post_purpose: postPurpose ?? 'album',
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'アップロードに失敗しました';
@@ -259,7 +263,7 @@ export function useUploadQueue({ roomId, nickname, participantId, onPostComplete
         drainQueueRef.current();
       }
     },
-    [roomId, nickname, participantId, onPostComplete, updateItem]
+    [roomId, nickname, participantId, postPurpose, onPostComplete, updateItem]
   );
 
   const drainQueue = useCallback(() => {

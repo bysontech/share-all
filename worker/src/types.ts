@@ -55,6 +55,7 @@ export interface Post {
   participant_id: string | null;
   display_file_key: string | null;
   display_mime_type: string | null;
+  post_purpose: string; // 'slideshow' | 'album' | 'video'
 }
 
 export interface MediaDerivative {

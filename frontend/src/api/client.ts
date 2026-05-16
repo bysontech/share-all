@@ -78,6 +78,7 @@ export interface Post {
   sort_order: number | null;
   participant_id: string | null;
   display_file_key: string | null;
+  post_purpose: string; // 'slideshow' | 'album' | 'video'
 }
 
 export interface AdminPost {
@@ -151,6 +152,8 @@ export const api = {
       fileSize: number;
       uploadType?: 'original' | 'display' | 'thumbnail';
       postId?: string;
+      postPurpose?: 'slideshow' | 'album' | 'video';
+      participantId?: string;
     }
   ) =>
     request<UploadUrlResponse>(`/rooms/${roomId}/posts/upload-url`, {
@@ -180,10 +183,16 @@ export const api = {
       body: '{}',
     }),
 
-  getPosts: (roomId: string, since?: number) => {
-    const qs = since != null ? `?since=${since}` : '';
+  getPosts: (roomId: string, since?: number, postPurpose?: 'slideshow' | 'album' | 'video') => {
+    const params = new URLSearchParams();
+    if (since != null) params.set('since', String(since));
+    if (postPurpose) params.set('post_purpose', postPurpose);
+    const qs = params.size > 0 ? `?${params}` : '';
     return request<PostsResponse>(`/rooms/${roomId}/posts${qs}`);
   },
+
+  getSlideshowCount: (roomId: string, participantId: string) =>
+    request<{ count: number }>(`/rooms/${roomId}/posts/slideshow-count?participantId=${encodeURIComponent(participantId)}`),
 
   getViewUrls: (
     roomId: string,

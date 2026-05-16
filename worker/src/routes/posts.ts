@@ -35,6 +35,8 @@ posts.post('/upload-url', async (c) => {
     fileSize?: number;
     uploadType?: 'original' | 'display' | 'thumbnail';
     postId?: string;
+    postPurpose?: 'slideshow' | 'album' | 'video';
+    participantId?: string;
   }>();
 
   if (!body.mimeType) return err('mimeType is required');
@@ -115,15 +117,32 @@ posts.post('/upload-url', async (c) => {
   if (body.fileSize > maxSize) return err(`File too large (max ${maxSize / 1024 / 1024}MB)`);
 
   const fileType = isVideo ? 'video' : 'image';
+
+  // Determine post_purpose: videos are always 'video', images default to 'album'
+  const postPurpose: 'slideshow' | 'album' | 'video' = isVideo ? 'video'
+    : body.postPurpose === 'slideshow' ? 'slideshow'
+    : 'album';
+
+  // Enforce 10-image slideshow limit per participant
+  let slideshowParticipantId: string | null = null;
+  if (postPurpose === 'slideshow') {
+    if (!body.participantId) return err('participantId is required for slideshow uploads');
+    slideshowParticipantId = body.participantId;
+    const cntRow = await c.env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM posts WHERE room_id = ? AND participant_id = ? AND post_purpose = 'slideshow' AND upload_status != 'failed'`
+    ).bind(roomId, slideshowParticipantId).first<{ cnt: number }>();
+    if ((cntRow?.cnt ?? 0) >= 10) return err('Slideshow limit reached (max 10 per participant)', 409);
+  }
+
   const postId = uuid();
   const ext = getExtFromMime(body.mimeType);
   const fileKey = `${roomId}/images/${postId}.${ext}`;
 
   await c.env.DB.prepare(
-    `INSERT INTO posts (id, room_id, nickname, file_key, file_type, mime_type, file_size, status, upload_status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'visible', 'pending', ?)`
+    `INSERT INTO posts (id, room_id, nickname, file_key, file_type, mime_type, file_size, status, upload_status, post_purpose, participant_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'visible', 'pending', ?, ?, ?)`
   )
-    .bind(postId, roomId, body.nickname.trim(), fileKey, fileType, body.mimeType, body.fileSize, now)
+    .bind(postId, roomId, body.nickname.trim(), fileKey, fileType, body.mimeType, body.fileSize, postPurpose, slideshowParticipantId, now)
     .run();
 
   let uploadUrl: string;
@@ -288,10 +307,10 @@ posts.post('/:postId/complete', async (c) => {
       .run();
   }
 
-  // Register slideshow_image derivative for images when Transformations is available.
+  // Register slideshow_image derivative only for slideshow-purpose posts.
   // file_key stores the source image (display WebP if present, else original).
   // The actual cdn-cgi URL is built on-demand in view-urls.
-  if (post.file_type === 'image' && c.env.IMAGE_TRANSFORMATIONS_ORIGIN) {
+  if (post.post_purpose === 'slideshow' && c.env.IMAGE_TRANSFORMATIONS_ORIGIN) {
     const slideshowSourceKey = body.displayFileKey ?? post.file_key;
     await c.env.DB.prepare(
       `INSERT INTO media_derivatives (id, post_id, type, file_key, mime_type, status, created_at, provider)
@@ -327,41 +346,62 @@ posts.get('/', async (c) => {
 
   const since = c.req.query('since');
   const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 100);
+  const purposeFilter = c.req.query('post_purpose');
 
   type Row = {
     id: string; nickname: string; file_type: string; file_key: string;
     mime_type: string; file_size: number; created_at: number; sort_order: number | null;
-    participant_id: string | null; display_file_key: string | null;
+    participant_id: string | null; display_file_key: string | null; post_purpose: string;
   };
 
   let results: Row[];
+  const purposeClause = purposeFilter ? ' AND post_purpose = ?' : '';
 
   if (since) {
-    const { results: rows } = await c.env.DB.prepare(
-      `SELECT id, nickname, file_type, file_key, mime_type, file_size, created_at, sort_order, participant_id, display_file_key
+    const stmt = c.env.DB.prepare(
+      `SELECT id, nickname, file_type, file_key, mime_type, file_size, created_at, sort_order, participant_id, display_file_key, post_purpose
        FROM posts
-       WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible' AND created_at > ?
+       WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible' AND created_at > ?${purposeClause}
        ORDER BY created_at ASC
        LIMIT ?`
-    )
-      .bind(roomId, parseInt(since, 10), limit)
-      .all<Row>();
+    );
+    const bound = purposeFilter
+      ? stmt.bind(roomId, parseInt(since, 10), purposeFilter, limit)
+      : stmt.bind(roomId, parseInt(since, 10), limit);
+    const { results: rows } = await bound.all<Row>();
     results = rows;
   } else {
-    const { results: rows } = await c.env.DB.prepare(
-      `SELECT id, nickname, file_type, file_key, mime_type, file_size, created_at, sort_order, participant_id, display_file_key
+    const stmt = c.env.DB.prepare(
+      `SELECT id, nickname, file_type, file_key, mime_type, file_size, created_at, sort_order, participant_id, display_file_key, post_purpose
        FROM posts
-       WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'
+       WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'${purposeClause}
        ORDER BY created_at ASC
        LIMIT ?`
-    )
-      .bind(roomId, limit)
-      .all<Row>();
+    );
+    const bound = purposeFilter
+      ? stmt.bind(roomId, purposeFilter, limit)
+      : stmt.bind(roomId, limit);
+    const { results: rows } = await bound.all<Row>();
     results = rows;
   }
 
   const serverTime = nowSec();
   return c.json({ posts: results, serverTime });
+});
+
+posts.get('/slideshow-count', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const roomResult = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in roomResult) return err(roomResult.error, roomResult.status);
+
+  const participantId = c.req.query('participantId');
+  if (!participantId) return err('participantId is required', 400);
+
+  const row = await c.env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM posts WHERE room_id = ? AND participant_id = ? AND post_purpose = 'slideshow' AND upload_status != 'failed'`
+  ).bind(roomId, participantId).first<{ cnt: number }>();
+
+  return c.json({ count: row?.cnt ?? 0 });
 });
 
 posts.post('/view-urls', async (c) => {
