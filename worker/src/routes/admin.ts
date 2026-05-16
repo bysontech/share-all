@@ -141,10 +141,10 @@ admin.get('/rooms', async (c) => {
     ).all<RoomRow>(),
     c.env.DB.prepare(
       `SELECT room_id,
-         COUNT(*) as total,
-         SUM(CASE WHEN file_type='image' THEN 1 ELSE 0 END) as image_count,
-         SUM(CASE WHEN file_type='video' THEN 1 ELSE 0 END) as video_count
-       FROM posts WHERE upload_status='completed' GROUP BY room_id`
+         COUNT(*) AS total,
+         SUM(CASE WHEN file_type = 'image' THEN 1 ELSE 0 END) AS image_count,
+         SUM(CASE WHEN file_type = 'video' THEN 1 ELSE 0 END) AS video_count
+       FROM posts WHERE upload_status = 'uploaded' GROUP BY room_id`
     ).all<CountRow>(),
   ]);
 
