@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { uuid, nowSec, ROOM_EXPIRES_AT_PLACEHOLDER_SEC } from '../utils';
 import { ADMIN_SESSION_COOKIE, verifyAdminSiteSession } from '../adminSession';
+import { verifyAdminEntrySession } from '../entrySession';
 
 type ParamRoomId = { roomId: string };
 
@@ -113,6 +114,15 @@ admin.post('/logout', (c) => {
 admin.get('/me', async (c) => {
   const denied = await requireAdmin(c);
   if (denied) return denied;
+  return c.json({ ok: true });
+});
+
+// GET /api/admin/entry-check
+// Returns 200 if a valid admin_entry cookie is present; 404 otherwise.
+// Used by the frontend /admin/login page to guard access without revealing the route exists.
+admin.get('/entry-check', async (c) => {
+  const ok = await verifyAdminEntrySession(c.env, c.req.header('Cookie'));
+  if (!ok) return c.notFound();
   return c.json({ ok: true });
 });
 

@@ -307,6 +307,9 @@ export const adminApi = {
     adminRequest<{ ok: boolean; deletedPosts: number }>(`/admin/rooms/${roomId}`, {
       method: 'DELETE',
     }),
+
+  /** Returns 200 if admin_entry cookie is valid; throws ApiError(404) otherwise. */
+  entryCheck: () => adminRequest<{ ok: boolean }>('/admin/entry-check'),
 };
 
 export async function putToR2(uploadUrl: string, data: File | Blob): Promise<void> {
