@@ -11,8 +11,10 @@ export interface QueueItem {
   error?: string;
   postId?: string;
   uploadUrl?: string;
+  retryCount: number;
 }
 
+export const MAX_RETRIES = 3;
 const MAX_CONCURRENT = 3;
 const MAX_VIDEO_CONCURRENT = 1;
 const MAX_DISPLAY_DIM = 2048;
@@ -295,6 +297,7 @@ export function useUploadQueue({ roomId, nickname, participantId, postPurpose, o
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
         file,
         status: 'pending',
+        retryCount: 0,
       }));
 
       // itemsRef must be updated before drainQueue so processItem can find the items
@@ -311,15 +314,18 @@ export function useUploadQueue({ roomId, nickname, participantId, postPurpose, o
     (id: string) => {
       const item = itemsRef.current.get(id);
       if (!item || item.status !== 'error') return;
+      if (item.retryCount >= MAX_RETRIES) return;
+      const newRetryCount = item.retryCount + 1;
       const reset: QueueItem = {
         ...item,
         status: 'pending',
         error: undefined,
         postId: undefined,
         uploadUrl: undefined,
+        retryCount: newRetryCount,
       };
       itemsRef.current.set(id, reset);
-      updateItem(id, { status: 'pending', error: undefined, postId: undefined, uploadUrl: undefined });
+      updateItem(id, { status: 'pending', error: undefined, postId: undefined, uploadUrl: undefined, retryCount: newRetryCount });
       queueRef.current.push(id);
       drainQueue();
     },

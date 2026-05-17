@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, ApiError, resolvePublicMediaUrl, type RoomInfo, type ThemeSettings } from '../api/client';
-import { useUploadQueue } from '../hooks/useUploadQueue';
+import { useUploadQueue, MAX_RETRIES } from '../hooks/useUploadQueue';
 import type { QueueItem } from '../hooks/useUploadQueue';
 import { getOrCreateParticipantId } from '../utils/participantId';
 
@@ -117,12 +117,15 @@ function UploadCard({
                 }}>{STATUS_LABEL[item.status]}</span>
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
                 <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>{(item.file.size / 1024 / 1024).toFixed(1)}MB</span>
-                {item.status === 'error' && (
+                {item.status === 'error' && item.retryCount < MAX_RETRIES && (
                   <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '6px 10px', cursor: 'pointer', flexShrink: 0, minHeight: 32 }}>再試行</button>
                 )}
               </div>
-              {item.status === 'error' && item.error && (
-                <p style={{ margin: '2px 0 0 64px', fontSize: 11, color: '#c00' }}>{item.error}</p>
+              {item.status === 'error' && (
+                <p style={{ margin: '2px 0 0 64px', fontSize: 11, color: '#c00' }}>
+                  {item.error}
+                  {item.retryCount >= MAX_RETRIES && ' (再試行上限に達しました)'}
+                </p>
               )}
             </li>
           ))}
