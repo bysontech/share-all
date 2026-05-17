@@ -173,7 +173,7 @@ export default function PhotosPage() {
                   }}
                 >
                   {url ? (
-                    <img src={resolvePublicMediaUrl(url)} alt="" loading="lazy"
+                    <img src={resolvePublicMediaUrl(url)} alt="" loading="lazy" decoding="async"
                       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                   ) : (
                     <div style={{ width: '100%', height: '100%', background: '#ede8df', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

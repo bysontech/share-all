@@ -632,6 +632,7 @@ export default function GalleryPage() {
                           src={resolvePublicMediaUrl(url)}
                           alt=""
                           loading="lazy"
+                          decoding="async"
                           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                         />
                       ) : (
@@ -662,6 +663,7 @@ export default function GalleryPage() {
                       src={resolvePublicMediaUrl(url)}
                       alt=""
                       loading="lazy"
+                      decoding="async"
                       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     />
                   ) : (

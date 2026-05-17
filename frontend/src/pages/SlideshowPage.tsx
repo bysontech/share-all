@@ -154,21 +154,39 @@ export default function SlideshowPage() {
   }, [roomId]);
 
   // ── View URL fetching ──
+  const fetchingViewUrlsRef = useRef(false);
   const fetchViewUrls = useCallback(async () => {
-    if (!roomId) return;
+    if (!roomId || fetchingViewUrlsRef.current) return;
     const imgPosts = imagePostsRef.current;
     if (imgPosts.length === 0) return;
+
     const now = Math.floor(Date.now() / 1000);
     const cache = viewUrlCacheRef.current;
-    const needsRefresh =
-      cache.expiresAt - now < VIEW_URL_REFRESH_BEFORE_EXPIRY ||
-      imgPosts.some((p) => !(p.id in cache.urls));
-    if (!needsRefresh) return;
+    const ttlExpired = cache.expiresAt - now < VIEW_URL_REFRESH_BEFORE_EXPIRY;
+
+    // Only fetch missing IDs when TTL is still valid; full refresh on expiry
+    const idsToFetch = ttlExpired
+      ? imgPosts.map((p) => p.id)
+      : imgPosts.filter((p) => !(p.id in cache.urls)).map((p) => p.id);
+    if (idsToFetch.length === 0) return;
+
+    fetchingViewUrlsRef.current = true;
     try {
-      const res = await api.getViewUrls(roomId, imgPosts.map((p) => p.id), undefined, 'slideshow');
-      setViewUrlCache({ urls: res.viewUrls, expiresAt: res.expiresAt });
+      const res = await api.getViewUrls(roomId, idsToFetch, undefined, 'slideshow');
+      if (!mountedRef.current) return;
+      if (ttlExpired) {
+        setViewUrlCache({ urls: res.viewUrls, expiresAt: res.expiresAt });
+      } else {
+        // Merge new URLs into existing cache, keep original TTL
+        setViewUrlCache((prev) => ({
+          urls: { ...prev.urls, ...res.viewUrls },
+          expiresAt: prev.expiresAt,
+        }));
+      }
     } catch {
       /* non-fatal */
+    } finally {
+      fetchingViewUrlsRef.current = false;
     }
   }, [roomId]);
 
@@ -277,15 +295,18 @@ export default function SlideshowPage() {
     }
   }, [displayablePosts.length]);
 
-  // ── Preload next image in background ──
+  // ── Preload next 2 images in background (limit to avoid memory pressure) ──
   useEffect(() => {
     const dPosts = displayablePostsRef.current;
     if (dPosts.length <= 1) return;
-    const nextPost = dPosts[(currentIndexRef.current + 1) % dPosts.length];
-    if (!nextPost) return;
-    const rawUrl = viewUrlCacheRef.current.urls[nextPost.id];
-    if (!rawUrl) return;
-    preloadImage(resolvePublicMediaUrl(rawUrl)).catch(() => {});
+    const cache = viewUrlCacheRef.current;
+    for (let i = 1; i <= 2; i++) {
+      const p = dPosts[(currentIndexRef.current + i) % dPosts.length];
+      if (!p) continue;
+      const rawUrl = cache.urls[p.id];
+      if (!rawUrl) continue;
+      preloadImage(resolvePublicMediaUrl(rawUrl)).catch(() => {});
+    }
   }, [currentIndex, viewUrlCache.expiresAt]);
 
   // ── Playback ──
@@ -296,7 +317,8 @@ export default function SlideshowPage() {
   useEffect(() => {
     if (!isPlaying || displayablePosts.length <= 1) return;
     const t = setInterval(() => {
-      if (!isPlayingRef.current) return;
+      // Skip advance when tab is hidden to avoid transitions nobody sees
+      if (!isPlayingRef.current || document.hidden) return;
       const dPosts = displayablePostsRef.current;
       transitionTo((currentIndexRef.current + 1) % dPosts.length);
     }, settings.intervalSeconds * 1000);
@@ -345,17 +367,25 @@ export default function SlideshowPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
-    const h = () => setIsFullscreen(!!document.fullscreenElement);
+    const h = () =>
+      setIsFullscreen(!!(document.fullscreenElement ?? (document as any).webkitFullscreenElement));
     document.addEventListener('fullscreenchange', h);
-    return () => document.removeEventListener('fullscreenchange', h);
+    document.addEventListener('webkitfullscreenchange', h);
+    return () => {
+      document.removeEventListener('fullscreenchange', h);
+      document.removeEventListener('webkitfullscreenchange', h);
+    };
   }, []);
 
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    (document.fullscreenElement ? document.exitFullscreen() : el.requestFullscreen()).catch(
-      () => {}
-    );
+    const fsEl = document.fullscreenElement ?? (document as any).webkitFullscreenElement;
+    if (fsEl) {
+      (document.exitFullscreen?.() ?? (document as any).webkitExitFullscreen?.())?.catch?.(() => {});
+    } else {
+      (el.requestFullscreen?.() ?? (el as any).webkitRequestFullscreen?.())?.catch?.(() => {});
+    }
     resetHideTimer();
   }, [resetHideTimer]);
 
@@ -439,11 +469,10 @@ export default function SlideshowPage() {
     <div
       ref={containerRef}
       style={{
-        width: '100vw',
-        height: '100vh',
+        position: 'fixed',
+        inset: 0,
         background: '#000',
         overflow: 'hidden',
-        position: 'relative',
         cursor: showControls ? 'default' : 'none',
         userSelect: 'none',
       }}

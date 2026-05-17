@@ -147,7 +147,7 @@ export default function VideosPage() {
                 >
                   <div style={{ aspectRatio: '16/9', position: 'relative' }}>
                     {thumb ? (
-                      <img src={resolvePublicMediaUrl(thumb)} alt="" loading="lazy"
+                      <img src={resolvePublicMediaUrl(thumb)} alt="" loading="lazy" decoding="async"
                         style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                     ) : (
                       <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
