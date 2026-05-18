@@ -266,11 +266,11 @@ export default function GalleryPage() {
     setLoading(true);
     api.getPosts(roomId)
       .then(r => {
-        setPosts(r.posts);
+        setPosts(r.posts.filter(p => p.post_purpose !== 'slideshow'));
         if (r.posts.length === 0) { setLoading(false); return; }
         const ids = r.posts.map(p => p.id);
         // thumbnail purpose: video thumbnail for videos, display_image for images
-        return api.getViewUrls(roomId, ids, undefined, 'thumbnail').then(v =>
+        return api.getViewUrls(roomId, ids, undefined, 'display').then(v =>
           setViewUrlCache({ urls: v.viewUrls, expiresAt: v.expiresAt })
         );
       })
