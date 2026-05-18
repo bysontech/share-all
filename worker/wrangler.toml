@@ -18,6 +18,10 @@ FRONTEND_URL = "https://share-photo.bysontech.jp"
 UPLOAD_BODY_SIGNING_SECRET = "local-dev-only-change-in-production"
 # HEIC 表示用: オレンジクラウドで /cdn-cgi/image が効く API のオリジン（未設定だと HEIC は URL なし）
 IMAGE_TRANSFORMATIONS_ORIGIN = "https://share-photo-api.bysontech.jp"
+#現在はテスト用
+PUBLIC_WEDDING_ROOM_ID = "40f7fc7f-b833-49b8-a667-f6a2003f5896"
+#本番用bk
+PUBLIC_WEDDING_ROOM_ID_PRODUCTION = "5f75d656-f453-4125-bacc-c434c20f779f"
 
 [dev]
 port = 8787
