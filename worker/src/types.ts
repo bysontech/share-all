@@ -26,6 +26,12 @@ export interface Env {
   ADMIN_ENTRY_SESSION_SECRET?: string;
   /** Max-Age in seconds for the admin entry cookie (default: 1800 = 30 min). */
   ADMIN_ENTRY_SESSION_MAX_AGE?: string;
+  /** Room ID used for the fixed public wedding URLs (/wedding/*). Can be set in [vars]. */
+  PUBLIC_WEDDING_ROOM_ID?: string;
+  /** SHA-256 hex of the participant entry token for /wedding/:token. Set via wrangler secret. */
+  PUBLIC_WEDDING_ENTRY_TOKEN_HASH?: string;
+  /** SHA-256 hex of the slideshow token for /wedding/live/:token. Set via wrangler secret. */
+  PUBLIC_WEDDING_LIVE_TOKEN_HASH?: string;
 }
 
 export interface Room {
