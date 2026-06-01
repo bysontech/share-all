@@ -54,21 +54,23 @@ interface UploadCardProps {
   desc: string;
   accept: string;
   items: QueueItem[];
-  summary: { total: number; active: number; done: number; error: number };
+  summary: { total: number; active: number; done: number; error: number; uploadedBytes: number; totalBytes: number };
   addFiles: (files: File[]) => void;
   retryItem: (id: string) => void;
   clearDone: () => void;
-  bgUrl: string;
+  hasBg: boolean;
   primaryBtnStyle: React.CSSProperties;
   cardStyle: React.CSSProperties;
   textColor: string;
+  accentColor: string;
   badge?: React.ReactNode;
   doneHint?: string;
+  isVideoCard?: boolean;
 }
 
 function UploadCard({
   title, desc, accept, items, summary, addFiles, retryItem, clearDone,
-  bgUrl, primaryBtnStyle, cardStyle, textColor, badge, doneHint,
+  hasBg, primaryBtnStyle, cardStyle, textColor, accentColor, badge, doneHint, isVideoCard,
 }: UploadCardProps) {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(e.target.files ?? []).filter(f =>
@@ -78,6 +80,10 @@ function UploadCard({
     e.target.value = '';
   }
 
+  const overallPercent = summary.totalBytes > 0
+    ? Math.min(100, Math.round(summary.uploadedBytes / summary.totalBytes * 100))
+    : 0;
+
   return (
     <div style={cardStyle}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
@@ -86,29 +92,66 @@ function UploadCard({
       </div>
       <p style={{ margin: '0 0 12px', fontSize: 12, color: textColor, lineHeight: 1.5 }}>{desc}</p>
 
+      {/* Video upload warning */}
+      {isVideoCard && summary.active > 0 && (
+        <div style={{
+          background: hasBg ? 'rgba(0,0,0,0.25)' : '#fff8e1',
+          border: `1px solid ${hasBg ? 'rgba(255,255,255,0.2)' : '#ffe082'}`,
+          borderRadius: 6,
+          padding: '10px 12px',
+          marginBottom: 12,
+          fontSize: 12,
+          lineHeight: 1.7,
+          color: hasBg ? 'rgba(255,255,255,0.9)' : '#5d4037',
+        }}>
+          動画は容量が大きいためアップロードに時間がかかります。<br />
+          Wi-Fi環境でのアップロードを推奨します。<br />
+          完了まで画面を閉じずにお待ちください。
+        </div>
+      )}
+
       <label style={{ ...primaryBtnStyle, display: 'inline-block', marginBottom: 12, cursor: 'pointer' }}>
         ファイルを選択
         <input type="file" accept={accept} multiple onChange={handleFileChange} style={{ display: 'none' }} />
       </label>
 
+      {/* Overall progress + summary */}
       {summary.total > 0 && (
-        <div style={{ fontSize: 12, color: textColor, marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-          <span>全{summary.total}件</span>
-          {summary.active > 0 && <span>処理中: {summary.active}</span>}
-          {summary.done > 0 && <span>完了: {summary.done}</span>}
-          {summary.error > 0 && <span style={{ color: '#f88' }}>エラー: {summary.error}</span>}
-          {summary.done > 0 && (
-            <button onClick={clearDone} style={{ fontSize: 11, cursor: 'pointer', padding: '4px 8px', borderRadius: 3, minHeight: 28 }}>
-              完了を消す
-            </button>
+        <div style={{ fontSize: 12, color: textColor, marginBottom: 8 }}>
+          {summary.active > 0 && summary.totalBytes > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <div style={{ height: 3, background: 'rgba(128,128,128,0.3)', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
+                <div style={{
+                  height: '100%',
+                  width: `${overallPercent}%`,
+                  background: accentColor,
+                  transition: 'width 0.3s ease',
+                  borderRadius: 2,
+                }} />
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 4 }}>
+                全体: {overallPercent}%（{(summary.uploadedBytes / 1024 / 1024).toFixed(1)} / {(summary.totalBytes / 1024 / 1024).toFixed(1)} MB）
+              </div>
+            </div>
           )}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            <span>全{summary.total}件</span>
+            {summary.active > 0 && <span>処理中: {summary.active}</span>}
+            {summary.done > 0 && <span>完了: {summary.done}</span>}
+            {summary.error > 0 && <span style={{ color: '#f88' }}>エラー: {summary.error}</span>}
+            {summary.done > 0 && (
+              <button onClick={clearDone} style={{ fontSize: 11, cursor: 'pointer', padding: '4px 8px', borderRadius: 3, minHeight: 28 }}>
+                完了を消す
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {items.length > 0 && (
         <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 8px' }}>
           {items.map(item => (
-            <li key={item.id} style={{ padding: '6px 0', borderBottom: `1px solid ${bgUrl ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
+            <li key={item.id} style={{ padding: '6px 0', borderBottom: `1px solid ${hasBg ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{
                   width: 56, flexShrink: 0, fontSize: 11, padding: '4px', borderRadius: 3, textAlign: 'center',
@@ -121,6 +164,28 @@ function UploadCard({
                   <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '6px 10px', cursor: 'pointer', flexShrink: 0, minHeight: 32 }}>再試行</button>
                 )}
               </div>
+
+              {/* Per-file progress bar */}
+              {item.status === 'uploading' && item.totalBytes > 0 && (
+                <div style={{ marginTop: 5, paddingLeft: 64 }}>
+                  <div style={{ height: 4, background: 'rgba(128,128,128,0.25)', borderRadius: 2, overflow: 'hidden', marginBottom: 3 }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${Math.min(100, Math.round(item.uploadedBytes / item.totalBytes * 100))}%`,
+                      background: accentColor,
+                      transition: 'width 0.25s linear',
+                      borderRadius: 2,
+                    }} />
+                  </div>
+                  <div style={{ fontSize: 11, color: textColor, display: 'flex', gap: 8, opacity: 0.85 }}>
+                    <span>{Math.min(100, Math.round(item.uploadedBytes / item.totalBytes * 100))}%</span>
+                    <span>
+                      {(item.uploadedBytes / 1024 / 1024).toFixed(1)} / {(item.totalBytes / 1024 / 1024).toFixed(1)} MB
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {item.status === 'error' && (
                 <p style={{ margin: '2px 0 0 64px', fontSize: 11, color: '#c00' }}>
                   {item.error}
@@ -139,6 +204,31 @@ function UploadCard({
   );
 }
 
+// ---- Shared background layers ----
+
+function BgLayers({
+  displayUrl, loaded, accentColor: accent,
+}: { displayUrl: string; loaded: boolean; accentColor: string }) {
+  const gradientBase = accent
+    ? `linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)`
+    : 'linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)';
+  return (
+    <>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 0, background: gradientBase }} />
+      {displayUrl && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 0,
+          backgroundImage: `url(${displayUrl})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          opacity: loaded ? 1 : 0,
+          transition: 'opacity 0.6s ease',
+        }} />
+      )}
+    </>
+  );
+}
+
 // ---- Main page ----
 
 export default function RoomPage() {
@@ -148,6 +238,21 @@ export default function RoomPage() {
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [roomError, setRoomError] = useState('');
   const { theme, viewUrls } = useTheme(roomId);
+
+  // Background image: use backgroundDisplay (IT-resized) when available, else original
+  const bgDisplayUrl = resolvePublicMediaUrl(
+    viewUrls['backgroundDisplay'] ?? viewUrls['background'] ?? ''
+  );
+  const [bgLoaded, setBgLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!bgDisplayUrl) { setBgLoaded(false); return; }
+    setBgLoaded(false);
+    const img = new Image();
+    img.onload = () => setBgLoaded(true);
+    img.onerror = () => {};
+    img.src = bgDisplayUrl;
+  }, [bgDisplayUrl]);
 
   const nicknameKey = `nickname:${roomId}`;
   const [nickname, setNickname] = useState(() => localStorage.getItem(nicknameKey) ?? '');
@@ -211,8 +316,13 @@ export default function RoomPage() {
   }
 
   const accentColor = theme.themeColor ?? '#b8860b';
-  const bgUrl = resolvePublicMediaUrl(viewUrls['background']);
   const mainVisualUrl = resolvePublicMediaUrl(viewUrls['mainVisual']);
+
+  // hasBg determines color scheme (white-text-on-dark vs dark-text-on-light)
+  const hasBg = !!bgDisplayUrl;
+  const overlayBg = hasBg ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.05)';
+  const contentColor = hasBg ? '#fff' : '#333';
+  const textColor = hasBg ? 'rgba(255,255,255,0.8)' : '#666';
 
   const outerStyle: React.CSSProperties = {
     minHeight: '100vh',
@@ -221,16 +331,10 @@ export default function RoomPage() {
     overflowX: 'hidden',
   };
 
-  const bgLayerStyle: React.CSSProperties = {
-    position: 'fixed', inset: 0, zIndex: 0,
-    backgroundImage: bgUrl ? `url(${bgUrl})` : 'linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)',
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-  };
-
   const overlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0, zIndex: 1,
-    background: bgUrl ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.05)',
+    background: overlayBg,
+    transition: 'background 0.6s ease',
   };
 
   const contentStyle: React.CSSProperties = {
@@ -238,17 +342,17 @@ export default function RoomPage() {
     maxWidth: 560,
     margin: '0 auto',
     padding: '0 16px 40px',
-    color: bgUrl ? '#fff' : '#333',
+    color: contentColor,
   };
 
   const cardStyle: React.CSSProperties = {
-    background: bgUrl ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.85)',
+    background: hasBg ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.85)',
     backdropFilter: 'blur(6px)',
-    border: `1px solid ${bgUrl ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.08)'}`,
+    border: `1px solid ${hasBg ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.08)'}`,
     borderRadius: 10,
     padding: 20,
     marginBottom: 20,
-    color: bgUrl ? '#fff' : '#333',
+    color: contentColor,
     animation: theme.animationMode === 'fade' ? 'roomFadeIn 0.5s ease' : undefined,
   };
 
@@ -268,24 +372,25 @@ export default function RoomPage() {
     WebkitTapHighlightColor: 'transparent',
   };
 
-  const textColor = bgUrl ? 'rgba(255,255,255,0.8)' : '#666';
-
   // ---- Error ----
   if (roomError) {
     return (
-      <div style={{ ...outerStyle, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={bgLayerStyle} /><div style={overlayStyle} />
-        <p style={{ position: 'relative', zIndex: 2, color: '#c00' }}>{roomError}</p>
+      <div style={outerStyle}>
+        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
+        <div style={overlayStyle} />
+        <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+          <p style={{ color: '#c00', background: 'rgba(255,255,255,0.9)', padding: '12px 20px', borderRadius: 8 }}>{roomError}</p>
+        </div>
       </div>
     );
   }
-  if (!room) return <div style={{ padding: 40, textAlign: 'center' }}>読み込み中...</div>;
 
-  // ---- Passcode gate ----
-  if (room.hasPasscode && !passcodeVerified) {
+  // ---- Passcode gate (only after room has loaded) ----
+  if (room !== null && room.hasPasscode && !passcodeVerified) {
     return (
       <div style={outerStyle}>
-        <div style={bgLayerStyle} /><div style={overlayStyle} />
+        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
+        <div style={overlayStyle} />
         <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
           <div style={{ ...cardStyle, width: '100%', maxWidth: 360 }}>
             <h2 style={{ margin: '0 0 16px', textAlign: 'center', color: accentColor }}>{room.name}</h2>
@@ -306,11 +411,25 @@ export default function RoomPage() {
     );
   }
 
+  // ---- Loading (room not yet loaded, no cached nickname) ----
+  if (!room && !nickname) {
+    return (
+      <div style={outerStyle}>
+        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
+        <div style={overlayStyle} />
+        <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+          <p style={{ fontSize: 14, color: textColor }}>読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+
   // ---- Nickname gate ----
   if (!nickname) {
     return (
       <div style={outerStyle}>
-        <div style={bgLayerStyle} /><div style={overlayStyle} />
+        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
+        <div style={overlayStyle} />
         <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
           <div style={{ ...cardStyle, width: '100%', maxWidth: 360, textAlign: 'center' }}>
             {mainVisualUrl && (
@@ -323,7 +442,7 @@ export default function RoomPage() {
               />
             )}
             <h2 style={{ margin: '0 0 4px', color: accentColor, fontSize: 22 }}>
-              {theme.title ?? room.name}
+              {theme.title ?? room?.name ?? ''}
             </h2>
             {theme.message && (
               <p style={{ fontSize: 13, color: textColor, margin: '0 0 20px', lineHeight: 1.7 }}>{theme.message}</p>
@@ -364,7 +483,7 @@ export default function RoomPage() {
   // ---- Main room view ----
   return (
     <div style={outerStyle}>
-      <div style={bgLayerStyle} />
+      <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
       <div style={overlayStyle} />
       <div style={contentStyle}>
         {/* Header */}
@@ -379,7 +498,7 @@ export default function RoomPage() {
             />
           )}
           <h1 style={{ margin: '0 0 4px', fontSize: 22, color: accentColor, fontWeight: 'normal' }}>
-            {theme.title ?? room.name}
+            {theme.title ?? room?.name ?? roomId}
           </h1>
           {theme.message && (
             <p style={{ margin: '0 0 4px', fontSize: 13, color: textColor, lineHeight: 1.7 }}>{theme.message}</p>
@@ -410,10 +529,11 @@ export default function RoomPage() {
             addFiles={slideshowQueue.addFiles}
             retryItem={slideshowQueue.retryItem}
             clearDone={slideshowQueue.clearDone}
-            bgUrl={bgUrl}
+            hasBg={hasBg}
             primaryBtnStyle={primaryBtnStyle}
             cardStyle={cardStyle}
             textColor={textColor}
+            accentColor={accentColor}
             badge={slideshowCountBadge}
             doneHint="スライドショーに追加されました。"
           />
@@ -429,10 +549,11 @@ export default function RoomPage() {
           addFiles={albumQueue.addFiles}
           retryItem={albumQueue.retryItem}
           clearDone={albumQueue.clearDone}
-          bgUrl={bgUrl}
+          hasBg={hasBg}
           primaryBtnStyle={primaryBtnStyle}
           cardStyle={cardStyle}
           textColor={textColor}
+          accentColor={accentColor}
           doneHint="アルバムに追加されました。"
         />
 
@@ -446,11 +567,13 @@ export default function RoomPage() {
           addFiles={videoQueue.addFiles}
           retryItem={videoQueue.retryItem}
           clearDone={videoQueue.clearDone}
-          bgUrl={bgUrl}
+          hasBg={hasBg}
           primaryBtnStyle={primaryBtnStyle}
           cardStyle={cardStyle}
           textColor={textColor}
+          accentColor={accentColor}
           doneHint="動画が共有されました。"
+          isVideoCard
         />
 
         {/* Navigation links */}

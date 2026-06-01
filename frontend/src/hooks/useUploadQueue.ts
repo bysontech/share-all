@@ -12,6 +12,8 @@ export interface QueueItem {
   postId?: string;
   uploadUrl?: string;
   retryCount: number;
+  uploadedBytes: number;
+  totalBytes: number;
 }
 
 export const MAX_RETRIES = 3;
@@ -177,7 +179,9 @@ export function useUploadQueue({ roomId, nickname, participantId, postPurpose, o
           updateItem(id, { postId, uploadUrl });
         }
 
-        await putToR2(uploadUrl, item.file);
+        await putToR2(uploadUrl, item.file, (loaded, total) => {
+          updateItem(id, { uploadedBytes: loaded, totalBytes: total });
+        });
 
         // HEIC/HEIF: display is handled server-side via Image Transformations
         const isHeicUpload = item.file.type === 'image/heic' || item.file.type === 'image/heif';
@@ -298,6 +302,8 @@ export function useUploadQueue({ roomId, nickname, participantId, postPurpose, o
         file,
         status: 'pending',
         retryCount: 0,
+        uploadedBytes: 0,
+        totalBytes: file.size,
       }));
 
       // itemsRef must be updated before drainQueue so processItem can find the items
@@ -323,9 +329,10 @@ export function useUploadQueue({ roomId, nickname, participantId, postPurpose, o
         postId: undefined,
         uploadUrl: undefined,
         retryCount: newRetryCount,
+        uploadedBytes: 0,
       };
       itemsRef.current.set(id, reset);
-      updateItem(id, { status: 'pending', error: undefined, postId: undefined, uploadUrl: undefined, retryCount: newRetryCount });
+      updateItem(id, { status: 'pending', error: undefined, postId: undefined, uploadUrl: undefined, retryCount: newRetryCount, uploadedBytes: 0 });
       queueRef.current.push(id);
       drainQueue();
     },
@@ -346,6 +353,8 @@ export function useUploadQueue({ roomId, nickname, participantId, postPurpose, o
     active: items.filter((it) => ['uploading', 'completing'].includes(it.status)).length,
     done: items.filter((it) => it.status === 'done').length,
     error: items.filter((it) => it.status === 'error').length,
+    uploadedBytes: items.reduce((sum, it) => sum + it.uploadedBytes, 0),
+    totalBytes: items.reduce((sum, it) => sum + it.totalBytes, 0),
   };
 
   return { items, addFiles, retryItem, clearDone, summary };
