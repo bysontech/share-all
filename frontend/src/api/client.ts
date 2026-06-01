@@ -321,12 +321,29 @@ export const adminApi = {
   entryCheck: () => adminRequest<{ ok: boolean }>('/admin/entry-check'),
 };
 
-export async function putToR2(uploadUrl: string, data: File | Blob): Promise<void> {
-  // Worker は proxy モードで /api/... の相対 URL を返す。別オリジン時は VITE_API_BASE 前置が必要
-  const res = await fetch(resolvePublicMediaUrl(uploadUrl), {
-    method: 'PUT',
-    body: data,
-    headers: { 'Content-Type': data.type },
+export function putToR2(
+  uploadUrl: string,
+  data: File | Blob,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', resolvePublicMediaUrl(uploadUrl));
+    xhr.setRequestHeader('Content-Type', data.type);
+
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total);
+      });
+    }
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`R2 PUT failed: ${xhr.status}`));
+    });
+    xhr.addEventListener('error', () => reject(new Error('ネットワークエラーが発生しました')));
+    xhr.addEventListener('abort', () => reject(new Error('アップロードが中断されました')));
+
+    xhr.send(data);
   });
-  if (!res.ok) throw new Error(`R2 PUT failed: ${res.status}`);
 }

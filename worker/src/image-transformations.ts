@@ -6,11 +6,13 @@
 export function buildCdnCgiImageUrl(
   zoneOrigin: string,
   sourceAbsoluteUrl: string,
-  opts: { width?: number; format?: string } = {}
+  opts: { width?: number; format?: string; quality?: number } = {}
 ): string {
   const width = opts.width ?? 1600;
   const format = opts.format ?? 'webp';
   const base = zoneOrigin.replace(/\/$/, '');
-  const options = `width=${width},format=${format},fit=scale-down`;
+  const parts = [`width=${width}`, `format=${format}`, 'fit=scale-down'];
+  if (opts.quality != null) parts.push(`quality=${opts.quality}`);
+  const options = parts.join(',');
   return `${base}/cdn-cgi/image/${options}/${encodeURIComponent(sourceAbsoluteUrl)}`;
 }

@@ -6,6 +6,7 @@ import { getRoomAndValidate } from '../db';
 import { authorizeRoomManage } from '../roomManageAuth';
 import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
 import { createUploadBodyToken, createViewFileToken } from '../uploadBodyToken';
+import { buildCdnCgiImageUrl } from '../image-transformations';
 
 type ParamRoomId = { roomId: string };
 
@@ -259,6 +260,19 @@ theme.post('/view-urls', async (c) => {
     resolveKey(row.main_visual_key, 'mainVisual'),
     resolveKey(row.background_image_key, 'background'),
   ]);
+
+  // Add background_display: lightweight resized version via Image Transformations
+  const transformOrigin = c.env.IMAGE_TRANSFORMATIONS_ORIGIN?.trim();
+  if (viewUrls['background'] && transformOrigin) {
+    let bgAbsUrl = viewUrls['background'];
+    if (bgAbsUrl.startsWith('/')) {
+      bgAbsUrl = `${transformOrigin.replace(/\/$/, '')}${bgAbsUrl}`;
+    }
+    viewUrls['backgroundDisplay'] = buildCdnCgiImageUrl(transformOrigin, bgAbsUrl, {
+      width: 1920,
+      quality: 75,
+    });
+  }
 
   return c.json({ viewUrls, expiresAt: exp });
 });
