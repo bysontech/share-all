@@ -1,14 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, ApiError, resolvePublicMediaUrl, type RoomInfo, type ThemeSettings } from '../api/client';
+import { api, ApiError, resolvePublicMediaUrl, type RoomInfo, type BootstrapTheme } from '../api/client';
 import { useUploadQueue, MAX_RETRIES } from '../hooks/useUploadQueue';
 import type { QueueItem } from '../hooks/useUploadQueue';
 import { getOrCreateParticipantId } from '../utils/participantId';
-
-const EMPTY_THEME: ThemeSettings = {
-  title: null, message: null, mainVisualKey: null,
-  backgroundImageKey: null, themeColor: null, animationMode: 'none',
-};
 
 const STATUS_LABEL: Record<QueueItem['status'], string> = {
   pending: '待機中', uploading: 'アップロード中',
@@ -17,21 +12,22 @@ const STATUS_LABEL: Record<QueueItem['status'], string> = {
 
 const SLIDESHOW_MAX = 10;
 
-function useTheme(roomId: string | undefined) {
-  const [theme, setTheme] = useState<ThemeSettings>(EMPTY_THEME);
-  const [viewUrls, setViewUrls] = useState<Record<string, string>>({});
+function useBootstrap(roomId: string | undefined) {
+  const [room, setRoom] = useState<RoomInfo | null>(null);
+  const [theme, setTheme] = useState<BootstrapTheme>({
+    title: null, message: null, themeColor: null, animationMode: 'none',
+    mainVisualUrl: null, backgroundDisplayUrl: null,
+  });
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (!roomId) return;
-    api.getTheme(roomId).then(t => {
-      setTheme(t);
-      if (t.mainVisualKey || t.backgroundImageKey) {
-        api.getThemeViewUrls(roomId).then(r => setViewUrls(r.viewUrls)).catch(() => {});
-      }
-    }).catch(() => {});
+    api.getBootstrap(roomId)
+      .then(b => { setRoom(b.room); setTheme(b.theme); })
+      .catch(e => setError(e instanceof ApiError ? e.message : 'ルーム情報の取得に失敗しました'));
   }, [roomId]);
 
-  return { theme, viewUrls };
+  return { room, theme, error };
 }
 
 // Inline keyframe injection (once)
@@ -207,22 +203,21 @@ function UploadCard({
 // ---- Shared background layers ----
 
 function BgLayers({
-  displayUrl, loaded, accentColor: accent,
-}: { displayUrl: string; loaded: boolean; accentColor: string }) {
-  const gradientBase = accent
-    ? `linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)`
-    : 'linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)';
+  displayUrl, loaded,
+}: { displayUrl: string; loaded: boolean }) {
   return (
     <>
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0, background: gradientBase }} />
+      <div style={{ position: 'fixed', inset: 0, zIndex: 0,
+        background: 'linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)' }} />
       {displayUrl && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 0,
           backgroundImage: `url(${displayUrl})`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
-          opacity: loaded ? 1 : 0,
-          transition: 'opacity 0.6s ease',
+          // Low opacity: bg is decorative, not primary — looks fine even before full load
+          opacity: loaded ? 0.35 : 0,
+          transition: 'opacity 1.5s ease',
         }} />
       )}
     </>
@@ -235,14 +230,10 @@ export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   injectKeyframes();
 
-  const [room, setRoom] = useState<RoomInfo | null>(null);
-  const [roomError, setRoomError] = useState('');
-  const { theme, viewUrls } = useTheme(roomId);
+  const { room, theme, error: roomError } = useBootstrap(roomId);
 
-  // Background image: use backgroundDisplay (IT-resized) when available, else original
-  const bgDisplayUrl = resolvePublicMediaUrl(
-    viewUrls['backgroundDisplay'] ?? viewUrls['background'] ?? ''
-  );
+  // Background: pre-generated display image — no fallback to original
+  const bgDisplayUrl = resolvePublicMediaUrl(theme.backgroundDisplayUrl ?? '');
   const [bgLoaded, setBgLoaded] = useState(false);
 
   useEffect(() => {
@@ -292,14 +283,8 @@ export default function RoomPage() {
   });
 
   useEffect(() => {
-    if (!roomId) return;
-    api.getRoom(roomId)
-      .then(r => {
-        setRoom(r);
-        if (!r.hasPasscode) setPasscodeVerified(true);
-      })
-      .catch(e => setRoomError(e instanceof ApiError ? e.message : 'ルーム情報の取得に失敗しました'));
-  }, [roomId]);
+    if (room && !room.hasPasscode) setPasscodeVerified(true);
+  }, [room]);
 
   useEffect(() => {
     if (!roomId || !participantId || !nickname) return;
@@ -316,13 +301,14 @@ export default function RoomPage() {
   }
 
   const accentColor = theme.themeColor ?? '#b8860b';
-  const mainVisualUrl = resolvePublicMediaUrl(viewUrls['mainVisual']);
+  const mainVisualUrl = resolvePublicMediaUrl(theme.mainVisualUrl ?? '');
 
-  // hasBg determines color scheme (white-text-on-dark vs dark-text-on-light)
+  // Since background is shown at low opacity (0.35), always use dark-text scheme
+  // The gradient provides a light base that makes dark text readable regardless of bg
   const hasBg = !!bgDisplayUrl;
-  const overlayBg = hasBg ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.05)';
-  const contentColor = hasBg ? '#fff' : '#333';
-  const textColor = hasBg ? 'rgba(255,255,255,0.8)' : '#666';
+  const overlayBg = 'rgba(255,255,255,0.0)';
+  const contentColor = '#333';
+  const textColor = '#666';
 
   const outerStyle: React.CSSProperties = {
     minHeight: '100vh',
@@ -334,7 +320,6 @@ export default function RoomPage() {
   const overlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0, zIndex: 1,
     background: overlayBg,
-    transition: 'background 0.6s ease',
   };
 
   const contentStyle: React.CSSProperties = {
@@ -346,9 +331,9 @@ export default function RoomPage() {
   };
 
   const cardStyle: React.CSSProperties = {
-    background: hasBg ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.85)',
-    backdropFilter: 'blur(6px)',
-    border: `1px solid ${hasBg ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.08)'}`,
+    background: 'rgba(255,255,255,0.88)',
+    backdropFilter: 'blur(8px)',
+    border: '1px solid rgba(0,0,0,0.08)',
     borderRadius: 10,
     padding: 20,
     marginBottom: 20,
@@ -376,7 +361,7 @@ export default function RoomPage() {
   if (roomError) {
     return (
       <div style={outerStyle}>
-        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
+        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} />
         <div style={overlayStyle} />
         <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
           <p style={{ color: '#c00', background: 'rgba(255,255,255,0.9)', padding: '12px 20px', borderRadius: 8 }}>{roomError}</p>
@@ -389,7 +374,7 @@ export default function RoomPage() {
   if (room !== null && room.hasPasscode && !passcodeVerified) {
     return (
       <div style={outerStyle}>
-        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
+        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} />
         <div style={overlayStyle} />
         <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
           <div style={{ ...cardStyle, width: '100%', maxWidth: 360 }}>
@@ -415,7 +400,7 @@ export default function RoomPage() {
   if (!room && !nickname) {
     return (
       <div style={outerStyle}>
-        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
+        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} />
         <div style={overlayStyle} />
         <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
           <p style={{ fontSize: 14, color: textColor }}>読み込み中...</p>
@@ -428,7 +413,7 @@ export default function RoomPage() {
   if (!nickname) {
     return (
       <div style={outerStyle}>
-        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
+        <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} />
         <div style={overlayStyle} />
         <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
           <div style={{ ...cardStyle, width: '100%', maxWidth: 360, textAlign: 'center' }}>
@@ -483,7 +468,7 @@ export default function RoomPage() {
   // ---- Main room view ----
   return (
     <div style={outerStyle}>
-      <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} accentColor={accentColor} />
+      <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} />
       <div style={overlayStyle} />
       <div style={contentStyle}>
         {/* Header */}

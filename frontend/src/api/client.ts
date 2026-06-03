@@ -110,8 +110,24 @@ export interface ThemeSettings {
   message: string | null;
   mainVisualKey: string | null;
   backgroundImageKey: string | null;
+  backgroundDisplayImageKey: string | null;
+  backgroundDisplayMimeType: string | null;
   themeColor: string | null;
   animationMode: string;
+}
+
+export interface BootstrapTheme {
+  title: string | null;
+  message: string | null;
+  themeColor: string | null;
+  animationMode: string;
+  mainVisualUrl: string | null;
+  backgroundDisplayUrl: string | null;
+}
+
+export interface BootstrapResponse {
+  room: RoomInfo;
+  theme: BootstrapTheme;
 }
 
 export interface ThemeViewUrls {
@@ -221,9 +237,11 @@ export const api = {
   getThemeViewUrls: (roomId: string) =>
     request<ThemeViewUrls>(`/rooms/${roomId}/theme/view-urls`, { method: 'POST', body: '{}' }),
 
+  getBootstrap: (roomId: string) => request<BootstrapResponse>(`/rooms/${roomId}/bootstrap`),
+
   getThemeUploadUrl: (
     roomId: string,
-    imageType: 'main_visual' | 'background',
+    imageType: 'main_visual' | 'background' | 'background_display',
     mimeType: string,
     fileSize: number,
     hostToken?: string
