@@ -16,6 +16,8 @@ interface ThemeRow {
   message: string | null;
   main_visual_key: string | null;
   background_image_key: string | null;
+  background_display_image_key: string | null;
+  background_display_mime_type: string | null;
   theme_color: string | null;
   animation_mode: string;
   updated_at: number;
@@ -29,6 +31,8 @@ function rowToResponse(row: ThemeRow) {
     message: row.message,
     mainVisualKey: row.main_visual_key,
     backgroundImageKey: row.background_image_key,
+    backgroundDisplayImageKey: row.background_display_image_key,
+    backgroundDisplayMimeType: row.background_display_mime_type,
     themeColor: row.theme_color,
     animationMode: row.animation_mode,
   };
@@ -53,6 +57,8 @@ theme.get('/', async (c) => {
       message: null,
       mainVisualKey: null,
       backgroundImageKey: null,
+      backgroundDisplayImageKey: null,
+      backgroundDisplayMimeType: null,
       themeColor: null,
       animationMode: 'none',
     });
@@ -76,6 +82,8 @@ theme.put('/', async (c) => {
     message?: string | null;
     mainVisualKey?: string | null;
     backgroundImageKey?: string | null;
+    backgroundDisplayImageKey?: string | null;
+    backgroundDisplayMimeType?: string | null;
     themeColor?: string | null;
     animationMode?: string;
   }>();
@@ -87,13 +95,15 @@ theme.put('/', async (c) => {
 
   const now = nowSec();
   await c.env.DB.prepare(
-    `INSERT INTO theme_settings (room_id, title, message, main_visual_key, background_image_key, theme_color, animation_mode, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO theme_settings (room_id, title, message, main_visual_key, background_image_key, background_display_image_key, background_display_mime_type, theme_color, animation_mode, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(room_id) DO UPDATE SET
        title = excluded.title,
        message = excluded.message,
        main_visual_key = excluded.main_visual_key,
        background_image_key = excluded.background_image_key,
+       background_display_image_key = excluded.background_display_image_key,
+       background_display_mime_type = excluded.background_display_mime_type,
        theme_color = excluded.theme_color,
        animation_mode = excluded.animation_mode,
        updated_at = excluded.updated_at`
@@ -104,6 +114,8 @@ theme.put('/', async (c) => {
       body.message ?? null,
       body.mainVisualKey ?? null,
       body.backgroundImageKey ?? null,
+      body.backgroundDisplayImageKey ?? null,
+      body.backgroundDisplayMimeType ?? null,
       body.themeColor ?? null,
       animationMode,
       now
@@ -115,6 +127,8 @@ theme.put('/', async (c) => {
     message: body.message ?? null,
     mainVisualKey: body.mainVisualKey ?? null,
     backgroundImageKey: body.backgroundImageKey ?? null,
+    backgroundDisplayImageKey: body.backgroundDisplayImageKey ?? null,
+    backgroundDisplayMimeType: body.backgroundDisplayMimeType ?? null,
     themeColor: body.themeColor ?? null,
     animationMode,
   });
@@ -136,8 +150,8 @@ theme.post('/upload-url', async (c) => {
     fileSize?: number;
   }>();
 
-  if (!body.imageType || !['main_visual', 'background'].includes(body.imageType)) {
-    return err('imageType must be main_visual or background');
+  if (!body.imageType || !['main_visual', 'background', 'background_display'].includes(body.imageType)) {
+    return err('imageType must be main_visual, background, or background_display');
   }
   if (!body.mimeType) return err('mimeType is required');
   if (!body.fileSize) return err('fileSize is required');
@@ -151,7 +165,8 @@ theme.post('/upload-url', async (c) => {
 
   const fileId = uuid();
   const ext = getExtFromMime(body.mimeType);
-  const fileKey = `${roomId}/theme/${body.imageType}/${fileId}.${ext}`;
+  const folderName = body.imageType === 'background_display' ? 'background-display' : body.imageType;
+  const fileKey = `${roomId}/theme/${folderName}/${fileId}.${ext}`;
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_UPLOAD ?? '900', 10);
   const now = nowSec();
 
@@ -261,17 +276,22 @@ theme.post('/view-urls', async (c) => {
     resolveKey(row.background_image_key, 'background'),
   ]);
 
-  // Add background_display: lightweight resized version via Image Transformations
-  const transformOrigin = c.env.IMAGE_TRANSFORMATIONS_ORIGIN?.trim();
-  if (viewUrls['background'] && transformOrigin) {
-    let bgAbsUrl = viewUrls['background'];
-    if (bgAbsUrl.startsWith('/')) {
-      bgAbsUrl = `${transformOrigin.replace(/\/$/, '')}${bgAbsUrl}`;
+  // Priority 1: pre-generated display key in R2
+  if (row.background_display_image_key) {
+    await resolveKey(row.background_display_image_key, 'backgroundDisplay');
+  } else {
+    // Priority 2: Image Transformations on-the-fly (migration fallback for existing rooms)
+    const transformOrigin = c.env.IMAGE_TRANSFORMATIONS_ORIGIN?.trim();
+    if (viewUrls['background'] && transformOrigin) {
+      let bgAbsUrl = viewUrls['background'];
+      if (bgAbsUrl.startsWith('/')) {
+        bgAbsUrl = `${transformOrigin.replace(/\/$/, '')}${bgAbsUrl}`;
+      }
+      viewUrls['backgroundDisplay'] = buildCdnCgiImageUrl(transformOrigin, bgAbsUrl, {
+        width: 1920,
+        quality: 75,
+      });
     }
-    viewUrls['backgroundDisplay'] = buildCdnCgiImageUrl(transformOrigin, bgAbsUrl, {
-      width: 1920,
-      quality: 75,
-    });
   }
 
   return c.json({ viewUrls, expiresAt: exp });

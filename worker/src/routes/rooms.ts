@@ -3,6 +3,9 @@ import type { Env } from '../types';
 import { uuid, nowSec, err, ROOM_EXPIRES_AT_PLACEHOLDER_SEC } from '../utils';
 import { getRoomAndValidate } from '../db';
 import { authorizeRoomManage } from '../roomManageAuth';
+import { generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
+import { createViewFileToken } from '../uploadBodyToken';
+import { buildCdnCgiImageUrl } from '../image-transformations';
 
 type ParamRoomId = { roomId: string };
 
@@ -42,6 +45,82 @@ rooms.post('/', async (c) => {
   const participantUrl = `${frontendUrl}/room/${roomId}`;
 
   return c.json({ roomId, hostToken, participantUrl }, 201);
+});
+
+// Bootstrap: room + theme + signed background/mainvisual URLs in one request
+rooms.get('/:roomId/bootstrap', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const result = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in result) return err(result.error, result.status);
+  const { room } = result;
+
+  type ThemeRow = {
+    title: string | null; message: string | null;
+    main_visual_key: string | null;
+    background_image_key: string | null;
+    background_display_image_key: string | null;
+    theme_color: string | null; animation_mode: string;
+  };
+  const themeRow = await c.env.DB.prepare(
+    'SELECT title, message, main_visual_key, background_image_key, background_display_image_key, theme_color, animation_mode FROM theme_settings WHERE room_id = ?'
+  ).bind(roomId).first<ThemeRow>();
+
+  const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
+  const usePresigned = r2SupportsPresignedPut(c.env.STORAGE);
+  const proxySecret = c.env.UPLOAD_BODY_SIGNING_SECRET;
+  const exp = nowSec() + expirySeconds;
+  const transformOrigin = c.env.IMAGE_TRANSFORMATIONS_ORIGIN?.trim();
+
+  async function signKey(fileKey: string, label: string): Promise<string | null> {
+    try {
+      if (usePresigned) return await generatePresignedGetUrl(c.env.STORAGE, fileKey, expirySeconds);
+      if (proxySecret) {
+        const token = await createViewFileToken(proxySecret, { postId: label, roomId, fileKey, exp });
+        return `/api/rooms/${roomId}/theme/view-file/${label}?token=${encodeURIComponent(token)}`;
+      }
+    } catch (_e) { /* skip */ }
+    return null;
+  }
+
+  let mainVisualUrl: string | null = null;
+  let backgroundDisplayUrl: string | null = null;
+
+  if (themeRow) {
+    if (themeRow.main_visual_key) {
+      mainVisualUrl = await signKey(themeRow.main_visual_key, 'mainVisual');
+    }
+
+    if (themeRow.background_display_image_key) {
+      // Pre-generated display image (R2) — preferred path
+      backgroundDisplayUrl = await signKey(themeRow.background_display_image_key, 'backgroundDisplay');
+    } else if (themeRow.background_image_key && transformOrigin && proxySecret) {
+      // Migration fallback: IT on-the-fly from original
+      const bgUrl = await signKey(themeRow.background_image_key, 'background');
+      if (bgUrl) {
+        let bgAbsUrl = bgUrl;
+        if (bgAbsUrl.startsWith('/')) bgAbsUrl = `${transformOrigin.replace(/\/$/, '')}${bgAbsUrl}`;
+        backgroundDisplayUrl = buildCdnCgiImageUrl(transformOrigin, bgAbsUrl, { width: 1920, quality: 75 });
+      }
+    }
+    // If neither: backgroundDisplayUrl stays null → gradient fallback on client
+  }
+
+  return c.json({
+    room: {
+      roomId: room.id,
+      name: room.name,
+      hasPasscode: !!room.passcode,
+      description: room.description,
+    },
+    theme: {
+      title: themeRow?.title ?? null,
+      message: themeRow?.message ?? null,
+      themeColor: themeRow?.theme_color ?? null,
+      animationMode: themeRow?.animation_mode ?? 'none',
+      mainVisualUrl,
+      backgroundDisplayUrl,
+    },
+  });
 });
 
 rooms.get('/:roomId', async (c) => {
