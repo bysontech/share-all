@@ -134,6 +134,8 @@ const EMPTY_THEME: ThemeSettings = {
   title: null,
   message: null,
   mainVisualKey: null,
+  mainVisualDisplayKey: null,
+  mainVisualDisplayMimeType: null,
   backgroundImageKey: null,
   backgroundDisplayImageKey: null,
   backgroundDisplayMimeType: null,
@@ -141,14 +143,17 @@ const EMPTY_THEME: ThemeSettings = {
   animationMode: 'none',
 };
 
-async function generateBgDisplay(file: File): Promise<{ blob: Blob; mimeType: string } | null> {
+async function generateDisplayWebP(
+  file: File,
+  maxDim: number,
+  quality: number
+): Promise<{ blob: Blob; mimeType: string } | null> {
   try {
     let bitmap: ImageBitmap;
     try { bitmap = await createImageBitmap(file); } catch { return null; }
-    const MAX_DIM = 1920;
     let { width, height } = bitmap;
-    if (width > MAX_DIM || height > MAX_DIM) {
-      const scale = MAX_DIM / Math.max(width, height);
+    if (width > maxDim || height > maxDim) {
+      const scale = maxDim / Math.max(width, height);
       width = Math.round(width * scale);
       height = Math.round(height * scale);
     }
@@ -160,7 +165,7 @@ async function generateBgDisplay(file: File): Promise<{ blob: Blob; mimeType: st
     ctx.drawImage(bitmap, 0, 0, width, height);
     bitmap.close();
     return new Promise((resolve) => {
-      canvas.toBlob((blob) => resolve(blob ? { blob, mimeType: 'image/webp' } : null), 'image/webp', 0.75);
+      canvas.toBlob((blob) => resolve(blob ? { blob, mimeType: 'image/webp' } : null), 'image/webp', quality);
     });
   } catch { return null; }
 }
@@ -179,6 +184,8 @@ function ThemeSettingsForm({
   const [themeColor, setThemeColor] = useState(initial.themeColor ?? '#b8860b');
   const [animationMode, setAnimationMode] = useState(initial.animationMode);
   const [mainVisualKey, setMainVisualKey] = useState<string | null>(initial.mainVisualKey);
+  const [mainVisualDisplayKey, setMainVisualDisplayKey] = useState<string | null>(initial.mainVisualDisplayKey);
+  const [mainVisualDisplayMimeType, setMainVisualDisplayMimeType] = useState<string | null>(initial.mainVisualDisplayMimeType);
   const [bgKey, setBgKey] = useState<string | null>(initial.backgroundImageKey);
   const [bgDisplayKey, setBgDisplayKey] = useState<string | null>(initial.backgroundDisplayImageKey);
   const [bgDisplayMimeType, setBgDisplayMimeType] = useState<string | null>(initial.backgroundDisplayMimeType);
@@ -193,29 +200,57 @@ function ThemeSettingsForm({
     setThemeColor(initial.themeColor ?? '#b8860b');
     setAnimationMode(initial.animationMode);
     setMainVisualKey(initial.mainVisualKey);
+    setMainVisualDisplayKey(initial.mainVisualDisplayKey);
+    setMainVisualDisplayMimeType(initial.mainVisualDisplayMimeType);
     setBgKey(initial.backgroundImageKey);
     setBgDisplayKey(initial.backgroundDisplayImageKey);
     setBgDisplayMimeType(initial.backgroundDisplayMimeType);
-  }, [initial.title, initial.message, initial.themeColor, initial.animationMode, initial.mainVisualKey, initial.backgroundImageKey, initial.backgroundDisplayImageKey, initial.backgroundDisplayMimeType]);
+  }, [initial.title, initial.message, initial.themeColor, initial.animationMode, initial.mainVisualKey, initial.mainVisualDisplayKey, initial.mainVisualDisplayMimeType, initial.backgroundImageKey, initial.backgroundDisplayImageKey, initial.backgroundDisplayMimeType]);
+
+  async function uploadMainVisualImage(file: File) {
+    setUploadingMain(true);
+    try {
+      const res = await api.getThemeUploadUrl(roomId, 'main_visual', file.type, file.size);
+      await putToR2(res.uploadUrl, file);
+      setMainVisualKey(res.fileKey);
+
+      try {
+        const display = await generateDisplayWebP(file, 1920, 0.80);
+        if (display) {
+          const displayRes = await api.getThemeUploadUrl(roomId, 'main_visual_display', display.mimeType, display.blob.size);
+          await putToR2(displayRes.uploadUrl, display.blob);
+          setMainVisualDisplayKey(displayRes.fileKey);
+          setMainVisualDisplayMimeType(display.mimeType);
+        } else {
+          setMainVisualDisplayKey(null);
+          setMainVisualDisplayMimeType(null);
+        }
+      } catch {
+        setMainVisualDisplayKey(null);
+        setMainVisualDisplayMimeType(null);
+      }
+    } catch (e) {
+      alert(e instanceof ApiError ? e.message : '画像のアップロードに失敗しました');
+    } finally {
+      setUploadingMain(false);
+    }
+  }
 
   async function uploadBgImage(file: File) {
     setUploadingBg(true);
     try {
-      // Upload original
       const res = await api.getThemeUploadUrl(roomId, 'background', file.type, file.size);
       await putToR2(res.uploadUrl, file);
       setBgKey(res.fileKey);
 
-      // Generate and upload lightweight display version
       try {
-        const display = await generateBgDisplay(file);
+        const display = await generateDisplayWebP(file, 1920, 0.75);
         if (display) {
           const displayRes = await api.getThemeUploadUrl(roomId, 'background_display', display.mimeType, display.blob.size);
           await putToR2(displayRes.uploadUrl, display.blob);
           setBgDisplayKey(displayRes.fileKey);
           setBgDisplayMimeType(display.mimeType);
         } else {
-          // HEIC or canvas unsupported: clear display key so participants see gradient
           setBgDisplayKey(null);
           setBgDisplayMimeType(null);
         }
@@ -230,24 +265,6 @@ function ThemeSettingsForm({
     }
   }
 
-  async function uploadImage(
-    file: File,
-    imageType: 'main_visual',
-    setKey: (k: string) => void,
-    setUploading: (v: boolean) => void
-  ) {
-    setUploading(true);
-    try {
-      const res = await api.getThemeUploadUrl(roomId, imageType, file.type, file.size);
-      await putToR2(res.uploadUrl, file);
-      setKey(res.fileKey);
-    } catch (e) {
-      alert(e instanceof ApiError ? e.message : '画像のアップロードに失敗しました');
-    } finally {
-      setUploading(false);
-    }
-  }
-
   async function handleSave() {
     setSaving(true);
     setMsg('');
@@ -256,6 +273,8 @@ function ThemeSettingsForm({
         title: title.trim() || null,
         message: message.trim() || null,
         mainVisualKey,
+        mainVisualDisplayKey,
+        mainVisualDisplayMimeType,
         backgroundImageKey: bgKey,
         backgroundDisplayImageKey: bgDisplayKey,
         backgroundDisplayMimeType: bgDisplayMimeType,
@@ -310,7 +329,7 @@ function ThemeSettingsForm({
               accept="image/jpeg,image/png,image/webp"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) uploadImage(f, 'main_visual', setMainVisualKey, setUploadingMain);
+                if (f) uploadMainVisualImage(f);
                 e.target.value = '';
               }}
               style={{ display: 'none' }}
@@ -319,7 +338,11 @@ function ThemeSettingsForm({
             <label htmlFor="main-visual-input" style={{ padding: '5px 12px', background: '#555', color: '#fff', borderRadius: 3, cursor: 'pointer', fontSize: 13 }}>
               {uploadingMain ? 'アップロード中...' : '選択'}
             </label>
-            {mainVisualKey && <span style={{ fontSize: 11, color: '#888', wordBreak: 'break-all' }}>設定済み ✓</span>}
+            {mainVisualKey && (
+              <span style={{ fontSize: 11, color: '#888', wordBreak: 'break-all' }}>
+                設定済み ✓{mainVisualDisplayKey ? ' (表示用あり)' : ' (表示用なし)'}
+              </span>
+            )}
           </div>
         </label>
         <label style={{ ...labelStyle, flex: 1, minWidth: 200 }}>

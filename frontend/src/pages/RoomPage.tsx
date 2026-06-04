@@ -215,8 +215,7 @@ function BgLayers({
           backgroundImage: `url(${displayUrl})`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
-          // Low opacity: bg is decorative, not primary — looks fine even before full load
-          opacity: loaded ? 0.35 : 0,
+          opacity: loaded ? 1 : 0,
           transition: 'opacity 1.5s ease',
         }} />
       )}
@@ -303,10 +302,8 @@ export default function RoomPage() {
   const accentColor = theme.themeColor ?? '#b8860b';
   const mainVisualUrl = resolvePublicMediaUrl(theme.mainVisualUrl ?? '');
 
-  // Since background is shown at low opacity (0.35), always use dark-text scheme
-  // The gradient provides a light base that makes dark text readable regardless of bg
   const hasBg = !!bgDisplayUrl;
-  const overlayBg = 'rgba(255,255,255,0.0)';
+  const overlayBg = bgLoaded && bgDisplayUrl ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0)';
   const contentColor = '#333';
   const textColor = '#666';
 
@@ -472,25 +469,27 @@ export default function RoomPage() {
       <div style={overlayStyle} />
       <div style={contentStyle}>
         {/* Header */}
-        <div style={{ paddingTop: 32, paddingBottom: 24, textAlign: 'center' }}>
-          {mainVisualUrl && (
-            <img src={mainVisualUrl} alt="main visual"
-              style={{
-                width: 80, height: 80, objectFit: 'cover', borderRadius: '50%',
-                border: `3px solid ${accentColor}`, marginBottom: 12,
-                animation: theme.animationMode === 'float' ? 'floatY 3s ease-in-out infinite' : undefined,
-              }}
-            />
-          )}
-          <h1 style={{ margin: '0 0 4px', fontSize: 22, color: accentColor, fontWeight: 'normal' }}>
-            {theme.title ?? room?.name ?? roomId}
-          </h1>
-          {theme.message && (
-            <p style={{ margin: '0 0 4px', fontSize: 13, color: textColor, lineHeight: 1.7 }}>{theme.message}</p>
-          )}
-          <p style={{ margin: 0, fontSize: 12, color: textColor }}>
-            参加中: <strong style={{ color: accentColor }}>{nickname}</strong>
-          </p>
+        <div style={{ paddingTop: 32 }}>
+          <div style={{ ...cardStyle, textAlign: 'center', marginBottom: 20 }}>
+            {mainVisualUrl && (
+              <img src={mainVisualUrl} alt="main visual"
+                style={{
+                  width: 80, height: 80, objectFit: 'cover', borderRadius: '50%',
+                  border: `3px solid ${accentColor}`, marginBottom: 12,
+                  animation: theme.animationMode === 'float' ? 'floatY 3s ease-in-out infinite' : undefined,
+                }}
+              />
+            )}
+            <h1 style={{ margin: '0 0 4px', fontSize: 22, color: accentColor, fontWeight: 'normal' }}>
+              {theme.title ?? room?.name ?? roomId}
+            </h1>
+            {theme.message && (
+              <p style={{ margin: '0 0 4px', fontSize: 13, color: textColor, lineHeight: 1.7 }}>{theme.message}</p>
+            )}
+            <p style={{ margin: 0, fontSize: 12, color: textColor }}>
+              参加中: <strong style={{ color: accentColor }}>{nickname}</strong>
+            </p>
+          </div>
         </div>
 
         {/* Slideshow upload */}

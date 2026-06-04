@@ -15,6 +15,8 @@ interface ThemeRow {
   title: string | null;
   message: string | null;
   main_visual_key: string | null;
+  main_visual_display_key: string | null;
+  main_visual_display_mime_type: string | null;
   background_image_key: string | null;
   background_display_image_key: string | null;
   background_display_mime_type: string | null;
@@ -30,6 +32,8 @@ function rowToResponse(row: ThemeRow) {
     title: row.title,
     message: row.message,
     mainVisualKey: row.main_visual_key,
+    mainVisualDisplayKey: row.main_visual_display_key,
+    mainVisualDisplayMimeType: row.main_visual_display_mime_type,
     backgroundImageKey: row.background_image_key,
     backgroundDisplayImageKey: row.background_display_image_key,
     backgroundDisplayMimeType: row.background_display_mime_type,
@@ -56,6 +60,8 @@ theme.get('/', async (c) => {
       title: null,
       message: null,
       mainVisualKey: null,
+      mainVisualDisplayKey: null,
+      mainVisualDisplayMimeType: null,
       backgroundImageKey: null,
       backgroundDisplayImageKey: null,
       backgroundDisplayMimeType: null,
@@ -81,6 +87,8 @@ theme.put('/', async (c) => {
     title?: string | null;
     message?: string | null;
     mainVisualKey?: string | null;
+    mainVisualDisplayKey?: string | null;
+    mainVisualDisplayMimeType?: string | null;
     backgroundImageKey?: string | null;
     backgroundDisplayImageKey?: string | null;
     backgroundDisplayMimeType?: string | null;
@@ -95,12 +103,14 @@ theme.put('/', async (c) => {
 
   const now = nowSec();
   await c.env.DB.prepare(
-    `INSERT INTO theme_settings (room_id, title, message, main_visual_key, background_image_key, background_display_image_key, background_display_mime_type, theme_color, animation_mode, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO theme_settings (room_id, title, message, main_visual_key, main_visual_display_key, main_visual_display_mime_type, background_image_key, background_display_image_key, background_display_mime_type, theme_color, animation_mode, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(room_id) DO UPDATE SET
        title = excluded.title,
        message = excluded.message,
        main_visual_key = excluded.main_visual_key,
+       main_visual_display_key = excluded.main_visual_display_key,
+       main_visual_display_mime_type = excluded.main_visual_display_mime_type,
        background_image_key = excluded.background_image_key,
        background_display_image_key = excluded.background_display_image_key,
        background_display_mime_type = excluded.background_display_mime_type,
@@ -113,6 +123,8 @@ theme.put('/', async (c) => {
       body.title ?? null,
       body.message ?? null,
       body.mainVisualKey ?? null,
+      body.mainVisualDisplayKey ?? null,
+      body.mainVisualDisplayMimeType ?? null,
       body.backgroundImageKey ?? null,
       body.backgroundDisplayImageKey ?? null,
       body.backgroundDisplayMimeType ?? null,
@@ -126,6 +138,8 @@ theme.put('/', async (c) => {
     title: body.title ?? null,
     message: body.message ?? null,
     mainVisualKey: body.mainVisualKey ?? null,
+    mainVisualDisplayKey: body.mainVisualDisplayKey ?? null,
+    mainVisualDisplayMimeType: body.mainVisualDisplayMimeType ?? null,
     backgroundImageKey: body.backgroundImageKey ?? null,
     backgroundDisplayImageKey: body.backgroundDisplayImageKey ?? null,
     backgroundDisplayMimeType: body.backgroundDisplayMimeType ?? null,
@@ -150,8 +164,8 @@ theme.post('/upload-url', async (c) => {
     fileSize?: number;
   }>();
 
-  if (!body.imageType || !['main_visual', 'background', 'background_display'].includes(body.imageType)) {
-    return err('imageType must be main_visual, background, or background_display');
+  if (!body.imageType || !['main_visual', 'main_visual_display', 'background', 'background_display'].includes(body.imageType)) {
+    return err('imageType must be main_visual, main_visual_display, background, or background_display');
   }
   if (!body.mimeType) return err('mimeType is required');
   if (!body.fileSize) return err('fileSize is required');
@@ -165,7 +179,13 @@ theme.post('/upload-url', async (c) => {
 
   const fileId = uuid();
   const ext = getExtFromMime(body.mimeType);
-  const folderName = body.imageType === 'background_display' ? 'background-display' : body.imageType;
+  const folderMap: Record<string, string> = {
+    main_visual: 'main_visual',
+    main_visual_display: 'main-visual-display',
+    background: 'background',
+    background_display: 'background-display',
+  };
+  const folderName = folderMap[body.imageType] ?? body.imageType;
   const fileKey = `${roomId}/theme/${folderName}/${fileId}.${ext}`;
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_UPLOAD ?? '900', 10);
   const now = nowSec();
@@ -271,8 +291,10 @@ theme.post('/view-urls', async (c) => {
     } catch (_e) { /* skip */ }
   }
 
+  // main visual: prefer display key (lighter), fallback to original
+  const mainVisualSourceKey = row.main_visual_display_key ?? row.main_visual_key;
   await Promise.all([
-    resolveKey(row.main_visual_key, 'mainVisual'),
+    resolveKey(mainVisualSourceKey, 'mainVisual'),
     resolveKey(row.background_image_key, 'background'),
   ]);
 

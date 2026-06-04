@@ -109,6 +109,8 @@ export interface ThemeSettings {
   title: string | null;
   message: string | null;
   mainVisualKey: string | null;
+  mainVisualDisplayKey: string | null;
+  mainVisualDisplayMimeType: string | null;
   backgroundImageKey: string | null;
   backgroundDisplayImageKey: string | null;
   backgroundDisplayMimeType: string | null;
@@ -241,7 +243,7 @@ export const api = {
 
   getThemeUploadUrl: (
     roomId: string,
-    imageType: 'main_visual' | 'background' | 'background_display',
+    imageType: 'main_visual' | 'main_visual_display' | 'background' | 'background_display',
     mimeType: string,
     fileSize: number,
     hostToken?: string
