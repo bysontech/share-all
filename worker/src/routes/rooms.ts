@@ -57,12 +57,13 @@ rooms.get('/:roomId/bootstrap', async (c) => {
   type ThemeRow = {
     title: string | null; message: string | null;
     main_visual_key: string | null;
+    main_visual_display_key: string | null;
     background_image_key: string | null;
     background_display_image_key: string | null;
     theme_color: string | null; animation_mode: string;
   };
   const themeRow = await c.env.DB.prepare(
-    'SELECT title, message, main_visual_key, background_image_key, background_display_image_key, theme_color, animation_mode FROM theme_settings WHERE room_id = ?'
+    'SELECT title, message, main_visual_key, main_visual_display_key, background_image_key, background_display_image_key, theme_color, animation_mode FROM theme_settings WHERE room_id = ?'
   ).bind(roomId).first<ThemeRow>();
 
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
