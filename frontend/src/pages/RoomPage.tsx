@@ -136,7 +136,19 @@ function UploadCard({
             {summary.done > 0 && <span>完了: {summary.done}</span>}
             {summary.error > 0 && <span style={{ color: '#f88' }}>エラー: {summary.error}</span>}
             {summary.done > 0 && (
-              <button onClick={clearDone} style={{ fontSize: 11, cursor: 'pointer', padding: '4px 8px', borderRadius: 3, minHeight: 28 }}>
+              <button
+                onClick={clearDone}
+                style={{
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  padding: '4px 8px',
+                  borderRadius: 3,
+                  minHeight: 28,
+                  border: hasBg ? '1px solid rgba(255,255,255,0.24)' : undefined,
+                  background: hasBg ? 'rgba(255,255,255,0.14)' : undefined,
+                  color: hasBg ? '#fff' : undefined,
+                }}
+              >
                 完了を消す
               </button>
             )}
@@ -151,13 +163,34 @@ function UploadCard({
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{
                   width: 56, flexShrink: 0, fontSize: 11, padding: '4px', borderRadius: 3, textAlign: 'center',
-                  background: item.status === 'done' ? '#d4edda' : item.status === 'error' ? '#f8d7da' : item.status === 'pending' ? '#e2e3e5' : '#fff3cd',
-                  color: '#333',
+                  background: hasBg
+                    ? item.status === 'done' ? 'rgba(46, 125, 50, 0.42)'
+                      : item.status === 'error' ? 'rgba(183, 28, 28, 0.42)'
+                        : item.status === 'pending' ? 'rgba(255,255,255,0.18)'
+                          : 'rgba(245, 166, 35, 0.38)'
+                    : item.status === 'done' ? '#d4edda'
+                      : item.status === 'error' ? '#f8d7da'
+                        : item.status === 'pending' ? '#e2e3e5'
+                          : '#fff3cd',
+                  color: hasBg ? '#fff' : '#333',
                 }}>{STATUS_LABEL[item.status]}</span>
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
                 <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>{(item.file.size / 1024 / 1024).toFixed(1)}MB</span>
                 {item.status === 'error' && item.retryCount < MAX_RETRIES && (
-                  <button onClick={() => retryItem(item.id)} style={{ fontSize: 11, padding: '6px 10px', cursor: 'pointer', flexShrink: 0, minHeight: 32 }}>再試行</button>
+                  <button
+                    onClick={() => retryItem(item.id)}
+                    style={{
+                      fontSize: 11,
+                      padding: '6px 10px',
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                      minHeight: 32,
+                      borderRadius: 4,
+                      border: hasBg ? '1px solid rgba(255,255,255,0.25)' : undefined,
+                      background: hasBg ? 'rgba(255,255,255,0.14)' : undefined,
+                      color: hasBg ? '#fff' : undefined,
+                    }}
+                  >再試行</button>
                 )}
               </div>
 
@@ -207,8 +240,11 @@ function BgLayers({
 }: { displayUrl: string; loaded: boolean }) {
   return (
     <>
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0,
-        background: 'linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)' }} />
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 0,
+        background: 'linear-gradient(135deg, #f9f5ef 0%, #f0e8d5 100%)',
+        pointerEvents: 'none',
+      }} />
       {displayUrl && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 0,
@@ -216,10 +252,60 @@ function BgLayers({
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           opacity: loaded ? 1 : 0,
-          transition: 'opacity 1.5s ease',
+          transition: loaded ? 'opacity 180ms ease-out' : 'none',
+          pointerEvents: 'none',
         }} />
       )}
     </>
+  );
+}
+
+function MainVisualImage({
+  src,
+  size,
+  accentColor,
+  float,
+}: {
+  src: string;
+  size: number;
+  accentColor: string;
+  float: boolean;
+}) {
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+  }, [src]);
+
+  return (
+    <div style={{
+      width: size,
+      height: size,
+      borderRadius: '50%',
+      border: `3px solid ${accentColor}`,
+      margin: '0 auto 16px',
+      overflow: 'hidden',
+      background: 'rgba(255,255,255,0.18)',
+      boxSizing: 'border-box',
+      animation: float ? 'floatY 3s ease-in-out infinite' : undefined,
+      flexShrink: 0,
+    }}>
+      {src && (
+        <img
+          src={src}
+          alt="main visual"
+          onLoad={() => setLoaded(true)}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: 'block',
+            opacity: loaded ? 1 : 0,
+            transition: loaded ? 'opacity 160ms ease-out' : 'none',
+          }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -303,9 +389,11 @@ export default function RoomPage() {
   const mainVisualUrl = resolvePublicMediaUrl(theme.mainVisualUrl ?? '');
 
   const hasBg = !!bgDisplayUrl;
-  const overlayBg = bgLoaded && bgDisplayUrl ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0)';
-  const contentColor = '#333';
-  const textColor = '#666';
+  const overlayBg = hasBg
+    ? 'linear-gradient(180deg, rgba(0,0,0,0.22) 0%, rgba(0,0,0,0.34) 100%)'
+    : 'rgba(0,0,0,0)';
+  const contentColor = hasBg ? '#fff' : '#333';
+  const textColor = hasBg ? 'rgba(255,255,255,0.84)' : '#666';
 
   const outerStyle: React.CSSProperties = {
     minHeight: '100vh',
@@ -317,6 +405,7 @@ export default function RoomPage() {
   const overlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0, zIndex: 1,
     background: overlayBg,
+    pointerEvents: 'none',
   };
 
   const contentStyle: React.CSSProperties = {
@@ -328,14 +417,15 @@ export default function RoomPage() {
   };
 
   const cardStyle: React.CSSProperties = {
-    background: 'rgba(255,255,255,0.88)',
-    backdropFilter: 'blur(8px)',
-    border: '1px solid rgba(0,0,0,0.08)',
+    background: hasBg ? 'rgba(20, 18, 16, 0.34)' : 'rgba(255,255,255,0.85)',
+    backdropFilter: 'blur(12px) saturate(1.05)',
+    WebkitBackdropFilter: 'blur(12px) saturate(1.05)',
+    border: hasBg ? '1px solid rgba(255,255,255,0.22)' : '1px solid rgba(0,0,0,0.08)',
     borderRadius: 10,
     padding: 20,
     marginBottom: 20,
     color: contentColor,
-    animation: theme.animationMode === 'fade' ? 'roomFadeIn 0.5s ease' : undefined,
+    boxShadow: hasBg ? '0 12px 32px rgba(0,0,0,0.18)' : undefined,
   };
 
   const primaryBtnStyle: React.CSSProperties = {
@@ -393,8 +483,8 @@ export default function RoomPage() {
     );
   }
 
-  // ---- Loading (room not yet loaded, no cached nickname) ----
-  if (!room && !nickname) {
+  // ---- Loading (room/theme bootstrap not yet loaded) ----
+  if (!room) {
     return (
       <div style={outerStyle}>
         <BgLayers displayUrl={bgDisplayUrl} loaded={bgLoaded} />
@@ -414,15 +504,12 @@ export default function RoomPage() {
         <div style={overlayStyle} />
         <div style={{ ...contentStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
           <div style={{ ...cardStyle, width: '100%', maxWidth: 360, textAlign: 'center' }}>
-            {mainVisualUrl && (
-              <img src={mainVisualUrl} alt="main visual"
-                style={{
-                  width: 120, height: 120, objectFit: 'cover', borderRadius: '50%',
-                  border: `3px solid ${accentColor}`, marginBottom: 16,
-                  animation: theme.animationMode === 'float' ? 'floatY 3s ease-in-out infinite' : undefined,
-                }}
-              />
-            )}
+            <MainVisualImage
+              src={mainVisualUrl}
+              size={120}
+              accentColor={accentColor}
+              float={theme.animationMode === 'float'}
+            />
             <h2 style={{ margin: '0 0 4px', color: accentColor, fontSize: 22 }}>
               {theme.title ?? room?.name ?? ''}
             </h2>
@@ -471,15 +558,12 @@ export default function RoomPage() {
         {/* Header */}
         <div style={{ paddingTop: 32 }}>
           <div style={{ ...cardStyle, textAlign: 'center', marginBottom: 20 }}>
-            {mainVisualUrl && (
-              <img src={mainVisualUrl} alt="main visual"
-                style={{
-                  width: 80, height: 80, objectFit: 'cover', borderRadius: '50%',
-                  border: `3px solid ${accentColor}`, marginBottom: 12,
-                  animation: theme.animationMode === 'float' ? 'floatY 3s ease-in-out infinite' : undefined,
-                }}
-              />
-            )}
+            <MainVisualImage
+              src={mainVisualUrl}
+              size={80}
+              accentColor={accentColor}
+              float={theme.animationMode === 'float'}
+            />
             <h1 style={{ margin: '0 0 4px', fontSize: 22, color: accentColor, fontWeight: 'normal' }}>
               {theme.title ?? room?.name ?? roomId}
             </h1>
