@@ -6,8 +6,11 @@ import { authorizeRoomManage } from '../roomManageAuth';
 import { generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
 import { createViewFileToken } from '../uploadBodyToken';
 import { buildCdnCgiImageUrl } from '../image-transformations';
+import { resolveEventMode, computeNextTransitionAt } from '../eventMode';
 
 type ParamRoomId = { roomId: string };
+
+const VALID_EVENT_MODES = new Set(['draft', 'event_live', 'archive']);
 
 const rooms = new Hono<{ Bindings: Env }>();
 
@@ -47,7 +50,7 @@ rooms.post('/', async (c) => {
   return c.json({ roomId, hostToken, participantUrl }, 201);
 });
 
-// Bootstrap: room + theme + signed background/mainvisual URLs in one request
+// Bootstrap: room + theme + event mode + signed background/mainvisual URLs in one request
 rooms.get('/:roomId/bootstrap', async (c) => {
   const { roomId } = c.req.param() as ParamRoomId;
   const result = await getRoomAndValidate(c.env.DB, roomId);
@@ -69,7 +72,8 @@ rooms.get('/:roomId/bootstrap', async (c) => {
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
   const usePresigned = r2SupportsPresignedPut(c.env.STORAGE);
   const proxySecret = c.env.UPLOAD_BODY_SIGNING_SECRET;
-  const exp = nowSec() + expirySeconds;
+  const now = nowSec();
+  const exp = now + expirySeconds;
   const transformOrigin = c.env.IMAGE_TRANSFORMATIONS_ORIGIN?.trim();
 
   async function signKey(fileKey: string, label: string): Promise<string | null> {
@@ -87,15 +91,15 @@ rooms.get('/:roomId/bootstrap', async (c) => {
   let backgroundDisplayUrl: string | null = null;
 
   if (themeRow) {
-    if (themeRow.main_visual_key) {
-      mainVisualUrl = await signKey(themeRow.main_visual_key, 'mainVisual');
+    // Prefer display key (lighter) for main visual, fall back to original
+    const mainVisualSourceKey = themeRow.main_visual_display_key ?? themeRow.main_visual_key;
+    if (mainVisualSourceKey) {
+      mainVisualUrl = await signKey(mainVisualSourceKey, 'mainVisual');
     }
 
     if (themeRow.background_display_image_key) {
-      // Pre-generated display image (R2) — preferred path
       backgroundDisplayUrl = await signKey(themeRow.background_display_image_key, 'backgroundDisplay');
     } else if (themeRow.background_image_key && transformOrigin && proxySecret) {
-      // Migration fallback: IT on-the-fly from original
       const bgUrl = await signKey(themeRow.background_image_key, 'background');
       if (bgUrl) {
         let bgAbsUrl = bgUrl;
@@ -103,8 +107,10 @@ rooms.get('/:roomId/bootstrap', async (c) => {
         backgroundDisplayUrl = buildCdnCgiImageUrl(transformOrigin, bgAbsUrl, { width: 1920, quality: 75 });
       }
     }
-    // If neither: backgroundDisplayUrl stays null → gradient fallback on client
   }
+
+  const eventMode = resolveEventMode(room, now);
+  const nextTransitionAt = computeNextTransitionAt(room, now);
 
   return c.json({
     room: {
@@ -121,6 +127,8 @@ rooms.get('/:roomId/bootstrap', async (c) => {
       mainVisualUrl,
       backgroundDisplayUrl,
     },
+    eventMode,
+    nextTransitionAt,
   });
 });
 
@@ -202,6 +210,86 @@ rooms.put('/:roomId/slideshow-settings', async (c) => {
     .run();
 
   return c.json({ intervalSeconds, showNickname, orderMode });
+});
+
+// GET event mode settings (public — needed by participant page via bootstrap, admin page uses this)
+rooms.get('/:roomId/event-mode', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const result = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in result) return err(result.error, result.status);
+  const { room } = result;
+
+  const now = nowSec();
+  const eventMode = resolveEventMode(room, now);
+  const nextTransitionAt = computeNextTransitionAt(room, now);
+
+  return c.json({
+    eventMode,
+    manualMode: room.event_mode,
+    slideshowOpenAt: room.slideshow_open_at,
+    slideshowCloseAt: room.slideshow_close_at,
+    galleryOpenAt: room.gallery_open_at,
+    videoOpenAt: room.video_open_at,
+    nextTransitionAt,
+  });
+});
+
+// PUT event mode settings (requires host token or admin session)
+rooms.put('/:roomId/event-mode', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const result = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in result) return err(result.error, result.status);
+  const { room } = result;
+
+  if (!(await authorizeRoomManage(c.env, room, c.req.header('X-Host-Token'), c.req.header('Cookie')))) {
+    return err('Unauthorized', 401);
+  }
+
+  const body = await c.req.json<{
+    manualMode?: string | null;
+    slideshowOpenAt?: number | null;
+    slideshowCloseAt?: number | null;
+    galleryOpenAt?: number | null;
+    videoOpenAt?: number | null;
+  }>();
+
+  const manualMode = body.manualMode ?? null;
+  if (manualMode !== null && !VALID_EVENT_MODES.has(manualMode)) {
+    return err('manualMode must be draft, event_live, archive, or null');
+  }
+
+  const slideshowOpenAt = body.slideshowOpenAt ?? null;
+  const slideshowCloseAt = body.slideshowCloseAt ?? null;
+  const galleryOpenAt = body.galleryOpenAt ?? null;
+  const videoOpenAt = body.videoOpenAt ?? null;
+
+  await c.env.DB.prepare(
+    `UPDATE rooms SET
+       event_mode = ?,
+       slideshow_open_at = ?,
+       slideshow_close_at = ?,
+       gallery_open_at = ?,
+       video_open_at = ?
+     WHERE id = ?`
+  )
+    .bind(manualMode, slideshowOpenAt, slideshowCloseAt, galleryOpenAt, videoOpenAt, roomId)
+    .run();
+
+  // Re-fetch to return fresh resolved state
+  const updated = { ...room, event_mode: manualMode, slideshow_open_at: slideshowOpenAt, slideshow_close_at: slideshowCloseAt, gallery_open_at: galleryOpenAt, video_open_at: videoOpenAt };
+  const now = nowSec();
+  const eventMode = resolveEventMode(updated, now);
+  const nextTransitionAt = computeNextTransitionAt(updated, now);
+
+  return c.json({
+    eventMode,
+    manualMode,
+    slideshowOpenAt,
+    slideshowCloseAt,
+    galleryOpenAt,
+    videoOpenAt,
+    nextTransitionAt,
+  });
 });
 
 export default rooms;

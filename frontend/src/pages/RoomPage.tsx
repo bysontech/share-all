@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, ApiError, resolvePublicMediaUrl, type RoomInfo, type BootstrapTheme } from '../api/client';
+import { api, ApiError, resolvePublicMediaUrl, type RoomInfo, type BootstrapTheme, type EventMode } from '../api/client';
 import { useUploadQueue, MAX_RETRIES } from '../hooks/useUploadQueue';
 import type { QueueItem } from '../hooks/useUploadQueue';
 import { getOrCreateParticipantId } from '../utils/participantId';
@@ -18,16 +18,21 @@ function useBootstrap(roomId: string | undefined) {
     title: null, message: null, themeColor: null, animationMode: 'none',
     mainVisualUrl: null, backgroundDisplayUrl: null,
   });
+  const [eventMode, setEventMode] = useState<EventMode>('event_live');
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!roomId) return;
     api.getBootstrap(roomId)
-      .then(b => { setRoom(b.room); setTheme(b.theme); })
+      .then(b => {
+        setRoom(b.room);
+        setTheme(b.theme);
+        setEventMode(b.eventMode ?? 'event_live');
+      })
       .catch(e => setError(e instanceof ApiError ? e.message : 'ルーム情報の取得に失敗しました'));
   }, [roomId]);
 
-  return { room, theme, error };
+  return { room, theme, eventMode, error };
 }
 
 // Inline keyframe injection (once)
@@ -315,7 +320,7 @@ export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   injectKeyframes();
 
-  const { room, theme, error: roomError } = useBootstrap(roomId);
+  const { room, theme, eventMode, error: roomError } = useBootstrap(roomId);
 
   // Background: pre-generated display image — no fallback to original
   const bgDisplayUrl = resolvePublicMediaUrl(theme.backgroundDisplayUrl ?? '');
@@ -576,105 +581,124 @@ export default function RoomPage() {
           </div>
         </div>
 
-        {/* Slideshow upload */}
-        {slideshowAtLimit ? (
-          <div style={{ ...cardStyle, opacity: 0.75 }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>スライドショー用写真</h3>
-              {slideshowCountBadge}
-            </div>
-            <p style={{ margin: 0, fontSize: 12, color: '#f88' }}>
-              スライドショー写真は最大{SLIDESHOW_MAX}枚まで投稿できます。上限に達しました。
+        {/* ---- draft: 準備中 ---- */}
+        {eventMode === 'draft' && (
+          <div style={{ ...cardStyle, textAlign: 'center' }}>
+            <p style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 'bold', color: accentColor }}>準備中</p>
+            <p style={{ margin: 0, fontSize: 14, color: textColor, lineHeight: 1.8 }}>
+              まもなく開始します。<br />しばらくお待ちください。
             </p>
           </div>
-        ) : (
-          <UploadCard
-            title="スライドショー用写真"
-            desc={`会場のスクリーンに映す写真を選んでください。最大${SLIDESHOW_MAX}枚まで投稿できます。`}
-            accept={IMAGE_ACCEPT}
-            items={slideshowQueue.items}
-            summary={slideshowQueue.summary}
-            addFiles={slideshowQueue.addFiles}
-            retryItem={slideshowQueue.retryItem}
-            clearDone={slideshowQueue.clearDone}
-            hasBg={hasBg}
-            primaryBtnStyle={primaryBtnStyle}
-            cardStyle={cardStyle}
-            textColor={textColor}
-            accentColor={accentColor}
-            badge={slideshowCountBadge}
-            doneHint="スライドショーに追加されました。"
-          />
         )}
 
-        {/* Album upload */}
-        <UploadCard
-          title="共有アルバム用写真"
-          desc="みんなで保存・共有する写真を投稿してください。"
-          accept={IMAGE_ACCEPT}
-          items={albumQueue.items}
-          summary={albumQueue.summary}
-          addFiles={albumQueue.addFiles}
-          retryItem={albumQueue.retryItem}
-          clearDone={albumQueue.clearDone}
-          hasBg={hasBg}
-          primaryBtnStyle={primaryBtnStyle}
-          cardStyle={cardStyle}
-          textColor={textColor}
-          accentColor={accentColor}
-          doneHint="アルバムに追加されました。"
-        />
+        {/* ---- event_live: スライドショーのみ ---- */}
+        {eventMode === 'event_live' && (
+          <>
+            {slideshowAtLimit ? (
+              <div style={{ ...cardStyle, opacity: 0.75 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>スライドショー用写真</h3>
+                  {slideshowCountBadge}
+                </div>
+                <p style={{ margin: 0, fontSize: 12, color: '#f88' }}>
+                  スライドショー写真は最大{SLIDESHOW_MAX}枚まで投稿できます。上限に達しました。
+                </p>
+              </div>
+            ) : (
+              <UploadCard
+                title="スライドショー用写真"
+                desc={`会場のスクリーンに映す写真を選んでください。最大${SLIDESHOW_MAX}枚まで投稿できます。`}
+                accept={IMAGE_ACCEPT}
+                items={slideshowQueue.items}
+                summary={slideshowQueue.summary}
+                addFiles={slideshowQueue.addFiles}
+                retryItem={slideshowQueue.retryItem}
+                clearDone={slideshowQueue.clearDone}
+                hasBg={hasBg}
+                primaryBtnStyle={primaryBtnStyle}
+                cardStyle={cardStyle}
+                textColor={textColor}
+                accentColor={accentColor}
+                badge={slideshowCountBadge}
+                doneHint="スライドショーに追加されました。"
+              />
+            )}
+            <div style={{ ...cardStyle, textAlign: 'center' }}>
+              <p style={{ margin: '0 0 14px', fontSize: 13, color: textColor }}>
+                写真・動画共有は披露宴終了後に開放されます
+              </p>
+              <Link
+                to={`/room/${roomId}/slideshow`}
+                style={{ ...primaryBtnStyle, textDecoration: 'none', fontSize: 14, padding: '12px 24px' }}
+              >
+                スライドショーを見る
+              </Link>
+            </div>
+          </>
+        )}
 
-        {/* Video upload */}
-        <UploadCard
-          title="動画"
-          desc="思い出の動画を共有してください（MP4・MOV）。"
-          accept={VIDEO_ACCEPT}
-          items={videoQueue.items}
-          summary={videoQueue.summary}
-          addFiles={videoQueue.addFiles}
-          retryItem={videoQueue.retryItem}
-          clearDone={videoQueue.clearDone}
-          hasBg={hasBg}
-          primaryBtnStyle={primaryBtnStyle}
-          cardStyle={cardStyle}
-          textColor={textColor}
-          accentColor={accentColor}
-          doneHint="動画が共有されました。"
-          isVideoCard
-        />
-
-        {/* Navigation links */}
-        <div style={{ ...cardStyle, textAlign: 'center', marginBottom: 0 }}>
-          <p style={{ margin: '0 0 14px', fontSize: 13, color: textColor }}>
-            みんなの投稿を確認する
-          </p>
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link
-              to={`/room/${roomId}/photos`}
-              style={{
-                ...primaryBtnStyle,
-                textDecoration: 'none',
-                fontSize: 14,
-                padding: '12px 24px',
-              }}
-            >
-              写真アルバム
-            </Link>
-            <Link
-              to={`/room/${roomId}/videos`}
-              style={{
-                ...primaryBtnStyle,
-                background: '#555',
-                textDecoration: 'none',
-                fontSize: 14,
-                padding: '12px 24px',
-              }}
-            >
-              動画一覧
-            </Link>
-          </div>
-        </div>
+        {/* ---- archive: 写真・動画共有 ---- */}
+        {eventMode === 'archive' && (
+          <>
+            <div style={{ ...cardStyle }}>
+              <p style={{ margin: 0, fontSize: 13, color: textColor }}>
+                スライドショー投稿は終了しました。写真・動画をご共有ください。
+              </p>
+            </div>
+            <UploadCard
+              title="共有アルバム用写真"
+              desc="みんなで保存・共有する写真を投稿してください。"
+              accept={IMAGE_ACCEPT}
+              items={albumQueue.items}
+              summary={albumQueue.summary}
+              addFiles={albumQueue.addFiles}
+              retryItem={albumQueue.retryItem}
+              clearDone={albumQueue.clearDone}
+              hasBg={hasBg}
+              primaryBtnStyle={primaryBtnStyle}
+              cardStyle={cardStyle}
+              textColor={textColor}
+              accentColor={accentColor}
+              doneHint="アルバムに追加されました。"
+            />
+            <UploadCard
+              title="動画"
+              desc="思い出の動画を共有してください（MP4・MOV）。"
+              accept={VIDEO_ACCEPT}
+              items={videoQueue.items}
+              summary={videoQueue.summary}
+              addFiles={videoQueue.addFiles}
+              retryItem={videoQueue.retryItem}
+              clearDone={videoQueue.clearDone}
+              hasBg={hasBg}
+              primaryBtnStyle={primaryBtnStyle}
+              cardStyle={cardStyle}
+              textColor={textColor}
+              accentColor={accentColor}
+              doneHint="動画が共有されました。"
+              isVideoCard
+            />
+            <div style={{ ...cardStyle, textAlign: 'center', marginBottom: 0 }}>
+              <p style={{ margin: '0 0 14px', fontSize: 13, color: textColor }}>
+                みんなの投稿を確認する
+              </p>
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <Link
+                  to={`/room/${roomId}/photos`}
+                  style={{ ...primaryBtnStyle, textDecoration: 'none', fontSize: 14, padding: '12px 24px' }}
+                >
+                  写真アルバム
+                </Link>
+                <Link
+                  to={`/room/${roomId}/videos`}
+                  style={{ ...primaryBtnStyle, background: '#555', textDecoration: 'none', fontSize: 14, padding: '12px 24px' }}
+                >
+                  動画一覧
+                </Link>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
