@@ -43,6 +43,12 @@ export interface Room {
   /** Legacy NOT NULL column; not used for access control (see ROOM_EXPIRES_AT_PLACEHOLDER_SEC). */
   expires_at: number;
   created_at: number;
+  // Cycle 24: publication mode
+  event_mode: string | null;        // 'draft' | 'event_live' | 'archive' | null (auto)
+  slideshow_open_at: number | null; // Unix timestamp: slideshow opens
+  slideshow_close_at: number | null;// Unix timestamp: slideshow closes
+  gallery_open_at: number | null;   // Unix timestamp: gallery opens
+  video_open_at: number | null;     // Unix timestamp: video access opens
 }
 
 export interface Post {

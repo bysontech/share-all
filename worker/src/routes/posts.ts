@@ -6,6 +6,7 @@ import { getRoomAndValidate, getPost } from '../db';
 import { authorizeRoomManage } from '../roomManageAuth';
 import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
 import { buildCdnCgiImageUrl } from '../image-transformations';
+import { resolveEventMode } from '../eventMode';
 import {
   createUploadBodyToken,
   verifyUploadBodyToken,
@@ -122,6 +123,16 @@ posts.post('/upload-url', async (c) => {
   const postPurpose: 'slideshow' | 'album' | 'video' = isVideo ? 'video'
     : body.postPurpose === 'slideshow' ? 'slideshow'
     : 'album';
+
+  // Event mode enforcement (server-side — UI alone is not sufficient)
+  const { room } = roomResult;
+  const eventMode = resolveEventMode(room, now);
+  if (postPurpose === 'slideshow' && eventMode !== 'event_live') {
+    return err('Slideshow upload is not available in current room mode', 403);
+  }
+  if ((postPurpose === 'album' || postPurpose === 'video') && eventMode !== 'archive') {
+    return err('Photo/video upload is not available in current room mode', 403);
+  }
 
   // Enforce 10-image slideshow limit per participant
   let slideshowParticipantId: string | null = null;

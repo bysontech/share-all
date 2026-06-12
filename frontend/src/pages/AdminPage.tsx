@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, ApiError, type RoomInfo, type AdminPost, type SlideshowSettings, type ThemeSettings } from '../api/client';
+import { api, ApiError, type RoomInfo, type AdminPost, type SlideshowSettings, type ThemeSettings, type EventMode, type EventModeSettings } from '../api/client';
 import { putToR2 } from '../api/client';
 
 // ---- Sub-components ----
@@ -123,6 +123,175 @@ function SlideshowSettingsForm({
         >
           {saving ? '保存中...' : '設定を保存'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ---- Event mode section ----
+
+const MODE_META: Record<EventMode, { label: string; bg: string; color: string }> = {
+  draft:      { label: '準備中',    bg: '#e2e3e5', color: '#555' },
+  event_live: { label: '披露宴中',  bg: '#d4edda', color: '#155724' },
+  archive:    { label: '終了後',    bg: '#cce5ff', color: '#004085' },
+};
+
+function toDatetimeLocal(ts: number | null): string {
+  if (ts == null) return '';
+  const d = new Date(ts * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromDatetimeLocal(s: string): number | null {
+  if (!s) return null;
+  const ms = new Date(s).getTime();
+  return isNaN(ms) ? null : Math.floor(ms / 1000);
+}
+
+function EventModeSection({ roomId }: { roomId: string }) {
+  const [settings, setSettings] = useState<EventModeSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [manualMode, setManualMode] = useState<string>('auto');
+  const [openAt, setOpenAt] = useState('');
+  const [closeAt, setCloseAt] = useState('');
+  const [galleryAt, setGalleryAt] = useState('');
+  const [videoAt, setVideoAt] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    api.getEventMode(roomId)
+      .then(s => {
+        setSettings(s);
+        setManualMode(s.manualMode ?? 'auto');
+        setOpenAt(toDatetimeLocal(s.slideshowOpenAt));
+        setCloseAt(toDatetimeLocal(s.slideshowCloseAt));
+        setGalleryAt(toDatetimeLocal(s.galleryOpenAt));
+        setVideoAt(toDatetimeLocal(s.videoOpenAt));
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [roomId]);
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg('');
+    try {
+      const updated = await api.updateEventMode(roomId, {
+        manualMode: manualMode === 'auto' ? null : manualMode,
+        slideshowOpenAt: fromDatetimeLocal(openAt),
+        slideshowCloseAt: fromDatetimeLocal(closeAt),
+        galleryOpenAt: fromDatetimeLocal(galleryAt),
+        videoOpenAt: fromDatetimeLocal(videoAt),
+      });
+      setSettings(updated);
+      setMsg('保存しました');
+    } catch (e) {
+      setMsg(e instanceof ApiError ? `エラー: ${e.message}` : '保存に失敗しました');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) return <div style={{ fontSize: 13, color: '#888' }}>読み込み中...</div>;
+  if (!settings) return null;
+
+  const current = settings.eventMode;
+  const meta = MODE_META[current] ?? MODE_META.event_live;
+  const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, marginBottom: 10 };
+  const dtInputStyle: React.CSSProperties = { padding: '5px 8px', fontSize: 14, borderRadius: 4, border: '1px solid #ccc' };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Current resolved mode */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, color: '#555' }}>現在の状態：</span>
+        <span style={{ padding: '3px 12px', borderRadius: 12, background: meta.bg, color: meta.color, fontSize: 13, fontWeight: 'bold' }}>
+          {meta.label}
+        </span>
+        {settings.nextTransitionAt && (
+          <span style={{ fontSize: 12, color: '#888' }}>
+            次の切替予定: {new Date(settings.nextTransitionAt * 1000).toLocaleString('ja-JP')}
+          </span>
+        )}
+      </div>
+
+      {/* Manual override */}
+      <div>
+        <p style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 'bold' }}>手動切替</p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {(['auto', 'draft', 'event_live', 'archive'] as const).map(m => {
+            const active = manualMode === m;
+            const label = m === 'auto' ? '自動（スケジュール）' : MODE_META[m].label;
+            return (
+              <button
+                key={m}
+                onClick={() => setManualMode(m)}
+                style={{
+                  padding: '8px 16px', cursor: 'pointer', borderRadius: 4, fontSize: 13,
+                  border: active ? '2px solid #0d6efd' : '1px solid #ccc',
+                  background: active ? '#e7f0ff' : '#fff',
+                  fontWeight: active ? 'bold' : 'normal',
+                  minHeight: 38,
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {manualMode !== 'auto' && (
+          <p style={{ margin: '6px 0 0', fontSize: 12, color: '#e65100' }}>
+            手動切替中：スケジュールより優先されます
+          </p>
+        )}
+      </div>
+
+      {/* Schedule settings */}
+      <div>
+        <p style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 'bold' }}>スケジュール設定</p>
+        <p style={{ margin: '0 0 10px', fontSize: 12, color: '#666' }}>
+          手動切替が「自動」のときに有効です。時刻はご利用のブラウザのローカル時刻で入力してください。
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {[
+            { label: '披露宴開始（スライドショー開放）', val: openAt, set: setOpenAt },
+            { label: 'スライドショー終了（アーカイブ開始）', val: closeAt, set: setCloseAt },
+            { label: '写真ギャラリー開放（任意）', val: galleryAt, set: setGalleryAt },
+            { label: '動画開放（任意）', val: videoAt, set: setVideoAt },
+          ].map(({ label, val, set }) => (
+            <label key={label} style={labelStyle}>
+              <span style={{ display: 'block', marginBottom: 4 }}>{label}</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="datetime-local"
+                  value={val}
+                  onChange={e => set(e.target.value)}
+                  style={dtInputStyle}
+                />
+                {val && (
+                  <button onClick={() => set('')} style={{ fontSize: 11, padding: '4px 8px', cursor: 'pointer', borderRadius: 3 }}>
+                    クリア
+                  </button>
+                )}
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{ padding: '8px 24px', cursor: 'pointer', fontWeight: 'bold', marginRight: 12 }}
+        >
+          {saving ? '保存中...' : '保存'}
+        </button>
+        {msg && (
+          <span style={{ fontSize: 13, color: msg.startsWith('エラー') ? 'red' : 'green' }}>{msg}</span>
+        )}
       </div>
     </div>
   );
@@ -618,6 +787,12 @@ export default function AdminPage() {
             {settingsMsg}
           </p>
         )}
+      </section>
+
+      {/* Event mode */}
+      <section style={{ marginBottom: 32 }}>
+        <h3 style={{ margin: '0 0 14px' }}>ルーム公開モード</h3>
+        <EventModeSection roomId={roomId ?? ''} />
       </section>
 
       {/* Theme settings */}

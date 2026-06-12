@@ -127,9 +127,23 @@ export interface BootstrapTheme {
   backgroundDisplayUrl: string | null;
 }
 
+export type EventMode = 'draft' | 'event_live' | 'archive';
+
+export interface EventModeSettings {
+  eventMode: EventMode;
+  manualMode: string | null;
+  slideshowOpenAt: number | null;
+  slideshowCloseAt: number | null;
+  galleryOpenAt: number | null;
+  videoOpenAt: number | null;
+  nextTransitionAt: number | null;
+}
+
 export interface BootstrapResponse {
   room: RoomInfo;
   theme: BootstrapTheme;
+  eventMode: EventMode;
+  nextTransitionAt: number | null;
 }
 
 export interface ThemeViewUrls {
@@ -240,6 +254,26 @@ export const api = {
     request<ThemeViewUrls>(`/rooms/${roomId}/theme/view-urls`, { method: 'POST', body: '{}' }),
 
   getBootstrap: (roomId: string) => request<BootstrapResponse>(`/rooms/${roomId}/bootstrap`),
+
+  getEventMode: (roomId: string) =>
+    request<EventModeSettings>(`/rooms/${roomId}/event-mode`),
+
+  updateEventMode: (
+    roomId: string,
+    body: {
+      manualMode?: string | null;
+      slideshowOpenAt?: number | null;
+      slideshowCloseAt?: number | null;
+      galleryOpenAt?: number | null;
+      videoOpenAt?: number | null;
+    },
+    hostToken?: string
+  ) =>
+    request<EventModeSettings>(`/rooms/${roomId}/event-mode`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      ...(hostToken ? { headers: { 'X-Host-Token': hostToken } } : {}),
+    }),
 
   getThemeUploadUrl: (
     roomId: string,
