@@ -473,6 +473,26 @@ export default function RoomPage() {
     WebkitTapHighlightColor: 'transparent',
   };
 
+  const categoryIntroStyle: React.CSSProperties = {
+    ...cardStyle,
+    padding: '14px 16px',
+    marginBottom: 10,
+  };
+
+  const categoryTitleStyle: React.CSSProperties = {
+    margin: '0 0 6px',
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: accentColor,
+  };
+
+  const categoryBodyStyle: React.CSSProperties = {
+    margin: 0,
+    fontSize: 13,
+    color: textColor,
+    lineHeight: 1.7,
+  };
+
   // ---- Error ----
   if (roomError) {
     return (
@@ -618,6 +638,12 @@ export default function RoomPage() {
         {/* ---- event_live: スライドショーのみ ---- */}
         {eventMode === 'event_live' && (
           <>
+            <div style={categoryIntroStyle}>
+              <h2 style={categoryTitleStyle}>スライドショー用の写真</h2>
+              <p style={categoryBodyStyle}>
+                披露宴中は、会場スクリーンに流す写真を投稿できます。お気に入りの1枚を選んでください。
+              </p>
+            </div>
             {slideshowAtLimit ? (
               <div style={{ ...cardStyle, opacity: 0.75 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
@@ -647,6 +673,12 @@ export default function RoomPage() {
                 doneHint="スライドショーに追加されました。"
               />
             )}
+            <div style={categoryIntroStyle}>
+              <h2 style={categoryTitleStyle}>共有用の写真・動画</h2>
+              <p style={categoryBodyStyle}>
+                写真アルバムと動画の投稿は披露宴後に開放されます。今は表示のみで、投稿ボタンは押せません。
+              </p>
+            </div>
             <UploadCard
               title="共有アルバム用写真"
               desc="みんなで保存・共有する写真を投稿してください。"
@@ -684,26 +716,16 @@ export default function RoomPage() {
               disabled
               disabledReason="披露宴中はまだ投稿できません。披露宴終了後に開放されます。"
             />
-            <div style={{ ...cardStyle, textAlign: 'center' }}>
-              <p style={{ margin: '0 0 14px', fontSize: 13, color: textColor }}>
-                写真・動画共有は披露宴終了後に開放されます
-              </p>
-              <Link
-                to={`/room/${roomId}/slideshow`}
-                style={{ ...primaryBtnStyle, textDecoration: 'none', fontSize: 14, padding: '12px 24px' }}
-              >
-                スライドショーを見る
-              </Link>
-            </div>
           </>
         )}
 
         {/* ---- archive: 写真・動画共有 ---- */}
         {eventMode === 'archive' && (
           <>
-            <div style={{ ...cardStyle }}>
-              <p style={{ margin: 0, fontSize: 13, color: textColor }}>
-                スライドショー投稿は終了しました。写真・動画をご共有ください。
+            <div style={categoryIntroStyle}>
+              <h2 style={categoryTitleStyle}>共有用の写真・動画</h2>
+              <p style={categoryBodyStyle}>
+                披露宴後は、みんなで保存・共有する写真や動画を投稿できます。
               </p>
             </div>
             <UploadCard
