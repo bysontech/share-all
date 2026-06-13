@@ -493,6 +493,20 @@ export default function RoomPage() {
     lineHeight: 1.7,
   };
 
+  const categoryContentStyle: React.CSSProperties = {
+    marginTop: 14,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+  };
+
+  const nestedCardStyle: React.CSSProperties = {
+    ...cardStyle,
+    marginBottom: 0,
+    background: hasBg ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.64)',
+    boxShadow: undefined,
+  };
+
   // ---- Error ----
   if (roomError) {
     return (
@@ -643,79 +657,83 @@ export default function RoomPage() {
               <p style={categoryBodyStyle}>
                 披露宴中は、会場スクリーンに流す写真を投稿できます。お気に入りの1枚を選んでください。
               </p>
-            </div>
-            {slideshowAtLimit ? (
-              <div style={{ ...cardStyle, opacity: 0.75 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
-                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>スライドショー用写真</h3>
-                  {slideshowCountBadge}
-                </div>
-                <p style={{ margin: 0, fontSize: 12, color: '#f88' }}>
-                  スライドショー写真は最大{SLIDESHOW_MAX}枚まで投稿できます。上限に達しました。
-                </p>
+              <div style={categoryContentStyle}>
+                {slideshowAtLimit ? (
+                  <div style={{ ...nestedCardStyle, opacity: 0.75 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+                      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>スライドショー用写真</h3>
+                      {slideshowCountBadge}
+                    </div>
+                    <p style={{ margin: 0, fontSize: 12, color: '#f88' }}>
+                      スライドショー写真は最大{SLIDESHOW_MAX}枚まで投稿できます。上限に達しました。
+                    </p>
+                  </div>
+                ) : (
+                  <UploadCard
+                    title="写真"
+                    desc={`会場のスクリーンに映す写真を選んでください。最大${SLIDESHOW_MAX}枚まで投稿できます。`}
+                    accept={IMAGE_ACCEPT}
+                    items={slideshowQueue.items}
+                    summary={slideshowQueue.summary}
+                    addFiles={slideshowQueue.addFiles}
+                    retryItem={slideshowQueue.retryItem}
+                    clearDone={slideshowQueue.clearDone}
+                    hasBg={hasBg}
+                    primaryBtnStyle={primaryBtnStyle}
+                    cardStyle={nestedCardStyle}
+                    textColor={textColor}
+                    accentColor={accentColor}
+                    badge={slideshowCountBadge}
+                    doneHint="スライドショーに追加されました。"
+                  />
+                )}
               </div>
-            ) : (
-              <UploadCard
-                title="スライドショー用写真"
-                desc={`会場のスクリーンに映す写真を選んでください。最大${SLIDESHOW_MAX}枚まで投稿できます。`}
-                accept={IMAGE_ACCEPT}
-                items={slideshowQueue.items}
-                summary={slideshowQueue.summary}
-                addFiles={slideshowQueue.addFiles}
-                retryItem={slideshowQueue.retryItem}
-                clearDone={slideshowQueue.clearDone}
-                hasBg={hasBg}
-                primaryBtnStyle={primaryBtnStyle}
-                cardStyle={cardStyle}
-                textColor={textColor}
-                accentColor={accentColor}
-                badge={slideshowCountBadge}
-                doneHint="スライドショーに追加されました。"
-              />
-            )}
+            </div>
             <div style={categoryIntroStyle}>
               <h2 style={categoryTitleStyle}>共有用の写真・動画</h2>
               <p style={categoryBodyStyle}>
                 写真アルバムと動画の投稿は披露宴後に開放されます。今は表示のみで、投稿ボタンは押せません。
               </p>
+              <div style={categoryContentStyle}>
+                <UploadCard
+                  title="写真"
+                  desc="思い出の写真を共有してください。"
+                  accept={IMAGE_ACCEPT}
+                  items={albumQueue.items}
+                  summary={albumQueue.summary}
+                  addFiles={albumQueue.addFiles}
+                  retryItem={albumQueue.retryItem}
+                  clearDone={albumQueue.clearDone}
+                  hasBg={hasBg}
+                  primaryBtnStyle={primaryBtnStyle}
+                  cardStyle={nestedCardStyle}
+                  textColor={textColor}
+                  accentColor={accentColor}
+                  doneHint="アルバムに追加されました。"
+                  disabled
+                  disabledReason="披露宴中はまだ投稿できません。披露宴終了後に開放されます。"
+                />
+                <UploadCard
+                  title="動画"
+                  desc="思い出の動画を共有してください（MP4・MOV）。"
+                  accept={VIDEO_ACCEPT}
+                  items={videoQueue.items}
+                  summary={videoQueue.summary}
+                  addFiles={videoQueue.addFiles}
+                  retryItem={videoQueue.retryItem}
+                  clearDone={videoQueue.clearDone}
+                  hasBg={hasBg}
+                  primaryBtnStyle={primaryBtnStyle}
+                  cardStyle={nestedCardStyle}
+                  textColor={textColor}
+                  accentColor={accentColor}
+                  doneHint="動画が共有されました。"
+                  isVideoCard
+                  disabled
+                  disabledReason="披露宴中はまだ投稿できません。披露宴終了後に開放されます。"
+                />
+              </div>
             </div>
-            <UploadCard
-              title="共有アルバム用写真"
-              desc="みんなで保存・共有する写真を投稿してください。"
-              accept={IMAGE_ACCEPT}
-              items={albumQueue.items}
-              summary={albumQueue.summary}
-              addFiles={albumQueue.addFiles}
-              retryItem={albumQueue.retryItem}
-              clearDone={albumQueue.clearDone}
-              hasBg={hasBg}
-              primaryBtnStyle={primaryBtnStyle}
-              cardStyle={cardStyle}
-              textColor={textColor}
-              accentColor={accentColor}
-              doneHint="アルバムに追加されました。"
-              disabled
-              disabledReason="披露宴中はまだ投稿できません。披露宴終了後に開放されます。"
-            />
-            <UploadCard
-              title="動画"
-              desc="思い出の動画を共有してください（MP4・MOV）。"
-              accept={VIDEO_ACCEPT}
-              items={videoQueue.items}
-              summary={videoQueue.summary}
-              addFiles={videoQueue.addFiles}
-              retryItem={videoQueue.retryItem}
-              clearDone={videoQueue.clearDone}
-              hasBg={hasBg}
-              primaryBtnStyle={primaryBtnStyle}
-              cardStyle={cardStyle}
-              textColor={textColor}
-              accentColor={accentColor}
-              doneHint="動画が共有されました。"
-              isVideoCard
-              disabled
-              disabledReason="披露宴中はまだ投稿できません。披露宴終了後に開放されます。"
-            />
           </>
         )}
 
