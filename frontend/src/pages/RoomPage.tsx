@@ -67,13 +67,20 @@ interface UploadCardProps {
   badge?: React.ReactNode;
   doneHint?: string;
   isVideoCard?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 function UploadCard({
   title, desc, accept, items, summary, addFiles, retryItem, clearDone,
   hasBg, primaryBtnStyle, cardStyle, textColor, accentColor, badge, doneHint, isVideoCard,
+  disabled = false, disabledReason,
 }: UploadCardProps) {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (disabled) {
+      e.target.value = '';
+      return;
+    }
     const selected = Array.from(e.target.files ?? []).filter(f =>
       accept.split(',').some(a => f.type === a.trim())
     );
@@ -86,12 +93,22 @@ function UploadCard({
     : 0;
 
   return (
-    <div style={cardStyle}>
+    <div style={{ ...cardStyle, opacity: disabled ? 0.72 : cardStyle.opacity }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
         <h3 style={{ margin: 0, fontSize: 15, fontWeight: 'bold' }}>{title}</h3>
         {badge}
       </div>
       <p style={{ margin: '0 0 12px', fontSize: 12, color: textColor, lineHeight: 1.5 }}>{desc}</p>
+      {disabled && disabledReason && (
+        <p style={{
+          margin: '0 0 12px',
+          fontSize: 12,
+          lineHeight: 1.6,
+          color: hasBg ? 'rgba(255,255,255,0.78)' : '#777',
+        }}>
+          {disabledReason}
+        </p>
+      )}
 
       {/* Video upload warning */}
       {isVideoCard && summary.active > 0 && (
@@ -111,9 +128,16 @@ function UploadCard({
         </div>
       )}
 
-      <label style={{ ...primaryBtnStyle, display: 'inline-block', marginBottom: 12, cursor: 'pointer' }}>
+      <label style={{
+        ...primaryBtnStyle,
+        display: 'inline-block',
+        marginBottom: 12,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        filter: disabled ? 'grayscale(0.35)' : undefined,
+        opacity: disabled ? 0.55 : primaryBtnStyle.opacity,
+      }}>
         ファイルを選択
-        <input type="file" accept={accept} multiple onChange={handleFileChange} style={{ display: 'none' }} />
+        <input type="file" accept={accept} multiple disabled={disabled} onChange={handleFileChange} style={{ display: 'none' }} />
       </label>
 
       {/* Overall progress + summary */}
@@ -623,6 +647,43 @@ export default function RoomPage() {
                 doneHint="スライドショーに追加されました。"
               />
             )}
+            <UploadCard
+              title="共有アルバム用写真"
+              desc="みんなで保存・共有する写真を投稿してください。"
+              accept={IMAGE_ACCEPT}
+              items={albumQueue.items}
+              summary={albumQueue.summary}
+              addFiles={albumQueue.addFiles}
+              retryItem={albumQueue.retryItem}
+              clearDone={albumQueue.clearDone}
+              hasBg={hasBg}
+              primaryBtnStyle={primaryBtnStyle}
+              cardStyle={cardStyle}
+              textColor={textColor}
+              accentColor={accentColor}
+              doneHint="アルバムに追加されました。"
+              disabled
+              disabledReason="披露宴中はまだ投稿できません。披露宴終了後に開放されます。"
+            />
+            <UploadCard
+              title="動画"
+              desc="思い出の動画を共有してください（MP4・MOV）。"
+              accept={VIDEO_ACCEPT}
+              items={videoQueue.items}
+              summary={videoQueue.summary}
+              addFiles={videoQueue.addFiles}
+              retryItem={videoQueue.retryItem}
+              clearDone={videoQueue.clearDone}
+              hasBg={hasBg}
+              primaryBtnStyle={primaryBtnStyle}
+              cardStyle={cardStyle}
+              textColor={textColor}
+              accentColor={accentColor}
+              doneHint="動画が共有されました。"
+              isVideoCard
+              disabled
+              disabledReason="披露宴中はまだ投稿できません。披露宴終了後に開放されます。"
+            />
             <div style={{ ...cardStyle, textAlign: 'center' }}>
               <p style={{ margin: '0 0 14px', fontSize: 13, color: textColor }}>
                 写真・動画共有は披露宴終了後に開放されます
