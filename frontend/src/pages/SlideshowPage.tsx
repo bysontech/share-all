@@ -392,15 +392,39 @@ export default function SlideshowPage() {
     resetHideTimer();
   }, [resetHideTimer]);
 
-  // ── Presentation mode ──
-  // iPad Safari shows a native close ("×") control when using requestFullscreen().
-  // The slideshow is already fixed to the viewport, so this toggles only our UI state
-  // and avoids entering browser-native fullscreen.
+  // ── Fullscreen ──
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!(document.fullscreenElement ?? (document as any).webkitFullscreenElement));
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
   const toggleFullscreen = useCallback(() => {
-    setIsFullscreen((v) => !v);
+    const el = containerRef.current;
+    if (!el) return;
+
+    const fsEl = document.fullscreenElement ?? (document as any).webkitFullscreenElement;
+    if (fsEl) {
+      const exit = document.exitFullscreen
+        ? () => document.exitFullscreen()
+        : (document as any).webkitExitFullscreen
+          ? () => (document as any).webkitExitFullscreen()
+          : null;
+      if (exit) Promise.resolve(exit()).catch(() => {});
+    } else {
+      const request = el.requestFullscreen?.bind(el) ?? (el as any).webkitRequestFullscreen?.bind(el);
+      Promise.resolve(request?.({ navigationUI: 'hide' })).catch(() => {});
+    }
     resetHideTimer();
   }, [resetHideTimer]);
 
