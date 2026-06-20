@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { api, ApiError, resolvePublicMediaUrl, type Post, type SlideshowSettings } from '../api/client';
 import { usePostsPolling } from '../hooks/usePostsPolling';
 import { createDisplayHistory, drawNextPost, recordDisplayed, type DisplayHistory } from '../utils/slideshowPool';
@@ -392,30 +392,15 @@ export default function SlideshowPage() {
     resetHideTimer();
   }, [resetHideTimer]);
 
-  // ── Fullscreen ──
+  // ── Presentation mode ──
+  // iPad Safari shows a native close ("×") control when using requestFullscreen().
+  // The slideshow is already fixed to the viewport, so this toggles only our UI state
+  // and avoids entering browser-native fullscreen.
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  useEffect(() => {
-    const h = () =>
-      setIsFullscreen(!!(document.fullscreenElement ?? (document as any).webkitFullscreenElement));
-    document.addEventListener('fullscreenchange', h);
-    document.addEventListener('webkitfullscreenchange', h);
-    return () => {
-      document.removeEventListener('fullscreenchange', h);
-      document.removeEventListener('webkitfullscreenchange', h);
-    };
-  }, []);
-
   const toggleFullscreen = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const fsEl = document.fullscreenElement ?? (document as any).webkitFullscreenElement;
-    if (fsEl) {
-      (document.exitFullscreen?.() ?? (document as any).webkitExitFullscreen?.())?.catch?.(() => {});
-    } else {
-      (el.requestFullscreen?.() ?? (el as any).webkitRequestFullscreen?.())?.catch?.(() => {});
-    }
+    setIsFullscreen((v) => !v);
     resetHideTimer();
   }, [resetHideTimer]);
 
@@ -481,9 +466,6 @@ export default function SlideshowPage() {
         }}
       >
         <p style={{ color: '#f88' }}>{roomError}</p>
-        <Link to={`/room/${roomId}`} style={{ color: '#aaf' }}>
-          ← 戻る
-        </Link>
       </div>
     );
   }
@@ -582,7 +564,7 @@ export default function SlideshowPage() {
           zIndex: 10,
         }}
       >
-        {/* Top gradient + back link + counter */}
+        {/* Top gradient + counter */}
         <div
           style={{
             position: 'absolute',
@@ -591,23 +573,11 @@ export default function SlideshowPage() {
             right: 0,
             padding: '16px 20px',
             display: 'flex',
-            justifyContent: 'space-between',
+            justifyContent: 'flex-end',
             alignItems: 'center',
             background: 'linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%)',
           }}
         >
-          <Link
-            to={`/room/${roomId}`}
-            style={{
-              color: '#ddd',
-              textDecoration: 'none',
-              fontSize: 15,
-              padding: '4px 0',
-              fontFamily: 'sans-serif',
-            }}
-          >
-            ← 戻る
-          </Link>
           <span style={{ fontSize: 13, color: '#bbb', fontFamily: 'sans-serif' }}>
             {displayablePosts.length > 0
               ? `${(currentIndex % displayablePosts.length) + 1} / ${displayablePosts.length}`
