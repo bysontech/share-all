@@ -37,7 +37,7 @@ console.log(hash);
 または1行で：
 
 ```bash
-echo -n 'YOUR_TOKEN_HERE' | openssl dgst -sha256 -hex | awk '{print $2}'
+printf '%s' 'f232112c18047d3cbb04eaa6fba97e95c440e7690a2ecb6d' | openssl dgst -sha256 -hex | awk '{print $2}'
 ```
 
 ---
