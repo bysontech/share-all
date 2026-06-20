@@ -6,6 +6,8 @@ export const FRESH_WINDOW_SEC = 30 * 60;
 export const FRESH_RATIO = 0.7;
 /** How many recently-shown post ids to remember and avoid repeating. */
 export const RECENTLY_DISPLAYED_LIMIT = 50;
+/** Harder cooldown window: avoid these recent posts before relaxing. */
+export const COOLDOWN_DISPLAYED_LIMIT = 8;
 /** How many recent participants to remember and avoid showing back-to-back. */
 export const RECENT_PARTICIPANT_LIMIT = 3;
 /** Width of the "top candidates" window used for light randomization within a pool. */
@@ -77,15 +79,19 @@ export function drawNextPost(
   const primary = preferFresh ? fresh : archive;
   const secondary = preferFresh ? archive : fresh;
 
-  const recentSet = new Set(history.recentlyDisplayedIds);
+  const cooldownSize = Math.min(
+    COOLDOWN_DISPLAYED_LIMIT,
+    Math.max(1, candidates.length - 1)
+  );
+  const cooldownSet = new Set(history.recentlyDisplayedIds.slice(-cooldownSize));
   const recentParticipants = new Set(
     history.recentParticipantIds.filter((id): id is string => id != null)
   );
   const lastId = history.recentlyDisplayedIds[history.recentlyDisplayedIds.length - 1];
 
   const tierFilters: ((p: Post) => boolean)[] = [
-    (p) => !recentSet.has(p.id) && !(p.participant_id && recentParticipants.has(p.participant_id)),
-    (p) => !recentSet.has(p.id),
+    (p) => !cooldownSet.has(p.id) && !(p.participant_id && recentParticipants.has(p.participant_id)),
+    (p) => !cooldownSet.has(p.id),
     (p) => p.id !== lastId,
     () => true,
   ];

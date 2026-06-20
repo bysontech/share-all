@@ -10,6 +10,12 @@ function mimeToExt(mime: string): string {
   return map[mime.toLowerCase()] ?? 'jpg';
 }
 
+function buildDownloadFilename(post: Post, sequence: number): string {
+  const seq = String(sequence).padStart(3, '0');
+  const short = post.id.slice(0, 8);
+  return `photo_${seq}_${short}.${mimeToExt(post.mime_type)}`;
+}
+
 // ---- Preview Modal ----
 
 interface PreviewModalProps {
@@ -114,7 +120,7 @@ export default function PhotosPage() {
       return;
     }
     let done = 0;
-    for (const post of targets) {
+    for (const [index, post] of targets.entries()) {
       const url = urls[post.id];
       if (!url) { done++; setProgress({ current: done, total: targets.length }); continue; }
       try {
@@ -123,7 +129,7 @@ export default function PhotosPage() {
         const blob = await resp.blob();
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `photo_${post.id.slice(0, 8)}.${mimeToExt(post.mime_type)}`;
+        a.download = buildDownloadFilename(post, index + 1);
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

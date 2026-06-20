@@ -358,6 +358,8 @@ posts.get('/', async (c) => {
   const since = c.req.query('since');
   const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 100);
   const purposeFilter = c.req.query('post_purpose');
+  const cursor = c.req.query('cursor');
+  const useUploadedAtCursor = cursor === 'uploaded_at';
 
   type Row = {
     id: string; nickname: string; file_type: string; file_key: string;
@@ -369,16 +371,22 @@ posts.get('/', async (c) => {
   const purposeClause = purposeFilter ? ' AND post_purpose = ?' : '';
 
   if (since) {
+    const sinceValue = parseInt(since, 10);
+    if (!Number.isFinite(sinceValue)) return err('since must be a unix timestamp');
+    const cursorClause = useUploadedAtCursor
+      ? ' AND uploaded_at IS NOT NULL AND uploaded_at >= ?'
+      : ' AND created_at > ?';
+    const orderBy = useUploadedAtCursor ? 'uploaded_at ASC, created_at ASC' : 'created_at ASC';
     const stmt = c.env.DB.prepare(
       `SELECT id, nickname, file_type, file_key, mime_type, file_size, created_at, sort_order, participant_id, display_file_key, post_purpose
        FROM posts
-       WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible' AND created_at > ?${purposeClause}
-       ORDER BY created_at ASC
+       WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'${cursorClause}${purposeClause}
+       ORDER BY ${orderBy}
        LIMIT ?`
     );
     const bound = purposeFilter
-      ? stmt.bind(roomId, parseInt(since, 10), purposeFilter, limit)
-      : stmt.bind(roomId, parseInt(since, 10), limit);
+      ? stmt.bind(roomId, sinceValue, purposeFilter, limit)
+      : stmt.bind(roomId, sinceValue, limit);
     const { results: rows } = await bound.all<Row>();
     results = rows;
   } else {

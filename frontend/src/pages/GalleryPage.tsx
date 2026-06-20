@@ -47,34 +47,12 @@ function mimeToExt(mime: string): string {
   return map[mime.toLowerCase()] ?? 'bin';
 }
 
-function sanitizeNickname(name: string): string {
-  const s = (name ?? '')
-    .replace(/[^\w]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 20)
-    .replace(/_+$/g, '')
-    .toLowerCase();
-  return s || 'guest';
-}
-
-function formatDateForFilename(unixSec: number): string {
-  const d = new Date((unixSec || Math.floor(Date.now() / 1000)) * 1000);
-  const yyyy = d.getFullYear();
-  const MM = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const HH = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  const ss = String(d.getSeconds()).padStart(2, '0');
-  return `${yyyy}${MM}${dd}_${HH}${mm}${ss}`;
-}
-
-function buildDownloadFilename(post: Post): string {
-  const nick = sanitizeNickname(post.nickname);
-  const ts = formatDateForFilename(post.created_at);
+function buildDownloadFilename(post: Post, sequence: number): string {
+  const prefix = post.file_type === 'video' ? 'video' : 'photo';
+  const seq = String(sequence).padStart(3, '0');
   const short = post.id.slice(0, 8);
   const ext = mimeToExt(post.mime_type);
-  return `wedding_${nick}_${ts}_${short}.${ext}`;
+  return `${prefix}_${seq}_${short}.${ext}`;
 }
 
 type FilterType = 'all' | 'others' | 'unsaved' | 'others_unsaved';
@@ -320,7 +298,7 @@ export default function GalleryPage() {
     let done = 0;
     let failCount = 0;
 
-    for (const post of targets) {
+    for (const [index, post] of targets.entries()) {
       const url = urls[post.id];
       if (!url) {
         failCount++;
@@ -332,7 +310,7 @@ export default function GalleryPage() {
         const res = await fetch(resolvePublicMediaUrl(url));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
-        const filename = buildDownloadFilename(post);
+        const filename = buildDownloadFilename(post, index + 1);
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filename;

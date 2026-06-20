@@ -215,10 +215,16 @@ export const api = {
       body: '{}',
     }),
 
-  getPosts: (roomId: string, since?: number, postPurpose?: 'slideshow' | 'album' | 'video') => {
+  getPosts: (
+    roomId: string,
+    since?: number,
+    postPurpose?: 'slideshow' | 'album' | 'video',
+    cursor?: 'created_at' | 'uploaded_at'
+  ) => {
     const params = new URLSearchParams();
     if (since != null) params.set('since', String(since));
     if (postPurpose) params.set('post_purpose', postPurpose);
+    if (cursor) params.set('cursor', cursor);
     const qs = params.size > 0 ? `?${params}` : '';
     return request<PostsResponse>(`/rooms/${roomId}/posts${qs}`);
   },

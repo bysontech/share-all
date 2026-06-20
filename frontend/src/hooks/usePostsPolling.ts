@@ -7,7 +7,16 @@ import type { Post } from '../api/client';
 const BACKOFF_STEPS_MS = [5_000, 10_000, 15_000, 30_000];
 const TAB_HIDDEN_MS = 60_000;
 
-export function usePostsPolling(roomId: string | undefined, postPurpose?: 'slideshow' | 'album' | 'video') {
+interface UsePostsPollingOptions {
+  cursor?: 'created_at' | 'uploaded_at';
+  onNewPosts?: (posts: Post[]) => void;
+}
+
+export function usePostsPolling(
+  roomId: string | undefined,
+  postPurpose?: 'slideshow' | 'album' | 'video',
+  options: UsePostsPollingOptions = {}
+) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [error, setError] = useState('');
   const serverTimeRef = useRef<number | undefined>(undefined);
@@ -16,6 +25,8 @@ export function usePostsPolling(roomId: string | undefined, postPurpose?: 'slide
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelledRef = useRef(false);
   const fetchingRef = useRef(false);
+  const onNewPostsRef = useRef(options.onNewPosts);
+  onNewPostsRef.current = options.onNewPosts;
 
   // Returns true when at least one new post was added
   const mergePosts = useCallback((incoming: Post[]): boolean => {
@@ -23,6 +34,7 @@ export function usePostsPolling(roomId: string | undefined, postPurpose?: 'slide
     if (newOnes.length === 0) return false;
     newOnes.forEach((p) => idSetRef.current.add(p.id));
     setPosts((prev) => [...prev, ...newOnes].sort((a, b) => a.created_at - b.created_at));
+    if (serverTimeRef.current != null) onNewPostsRef.current?.(newOnes);
     return true;
   }, []);
 
@@ -50,7 +62,7 @@ export function usePostsPolling(roomId: string | undefined, postPurpose?: 'slide
       fetchingRef.current = true;
       const t0 = Date.now();
       try {
-        const res = await api.getPosts(roomId!, serverTimeRef.current, postPurpose);
+        const res = await api.getPosts(roomId!, serverTimeRef.current, postPurpose, options.cursor);
         if (cancelledRef.current) return;
 
         const hadNew = mergePosts(res.posts);
@@ -105,7 +117,7 @@ export function usePostsPolling(roomId: string | undefined, postPurpose?: 'slide
       if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [roomId, postPurpose, mergePosts]);
+  }, [roomId, postPurpose, options.cursor, mergePosts]);
 
   return { posts, error, addPost };
 }

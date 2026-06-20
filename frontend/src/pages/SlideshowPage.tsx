@@ -115,8 +115,38 @@ export default function SlideshowPage() {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  // Posts polling — only slideshow-purpose posts
-  const { posts, error: pollError } = usePostsPolling(roomId, 'slideshow');
+  // Current index (tracks where we are in playQueueRef)
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const currentIndexRef = useRef(0);
+  currentIndexRef.current = currentIndex;
+
+  // ── Fresh/Archive playback queue ──
+  // playQueueRef holds the generated display order (grows forward only, never
+  // wraps); historyRef tracks recently-shown posts/participants to keep the
+  // Fresh-priority draw from repeating photos or the same participant back-to-back.
+  // Both live only in memory for the duration of this page (no persistence).
+  const playQueueRef = useRef<Post[]>([]);
+  const historyRef = useRef<DisplayHistory>(createDisplayHistory());
+  const boostQueueRef = useRef<{ postId: string; remaining: number }[]>([]);
+
+  const handleNewSlideshowPosts = useCallback((newPosts: Post[]) => {
+    const imageNewPosts = newPosts.filter((p) => p.file_type === 'image');
+    if (imageNewPosts.length === 0) return;
+
+    const existing = new Map(boostQueueRef.current.map((b) => [b.postId, b.remaining]));
+    imageNewPosts.forEach((p) => existing.set(p.id, Math.max(existing.get(p.id) ?? 0, 2)));
+    boostQueueRef.current = [...existing.entries()].map(([postId, remaining]) => ({ postId, remaining }));
+
+    // Drop already-generated future entries so new photos can be considered soon.
+    playQueueRef.current = playQueueRef.current.slice(0, currentIndexRef.current + 1);
+  }, []);
+
+  // Posts polling — only slideshow-purpose posts. Use uploaded_at cursor to avoid
+  // missing posts that were created before upload finished.
+  const { posts, error: pollError } = usePostsPolling(roomId, 'slideshow', {
+    cursor: 'uploaded_at',
+    onNewPosts: handleNewSlideshowPosts,
+  });
 
   // Display order (asc/desc by created_at) is now only a tie-breaker within
   // the Fresh/Archive draw (see playQueueRef below); no upfront sort needed.
@@ -140,29 +170,23 @@ export default function SlideshowPage() {
   const displayablePostsRef = useRef<Post[]>([]);
   displayablePostsRef.current = displayablePosts;
 
-  // ── Fresh/Archive playback queue ──
-  // playQueueRef holds the generated display order (grows forward only, never
-  // wraps); historyRef tracks recently-shown posts/participants to keep the
-  // Fresh-priority draw from repeating photos or the same participant back-to-back.
-  // Both live only in memory for the duration of this page (no persistence).
-  const playQueueRef = useRef<Post[]>([]);
-  const historyRef = useRef<DisplayHistory>(createDisplayHistory());
-
   const ensureQueueAt = useCallback((idx: number) => {
     const candidates = displayablePostsRef.current;
     if (candidates.length === 0) return;
     while (playQueueRef.current.length <= idx) {
-      const next = drawNextPost(candidates, settingsRef.current.orderMode, historyRef.current);
+      const boostIds = new Set(boostQueueRef.current.filter((b) => b.remaining > 0).map((b) => b.postId));
+      const boostedCandidates = candidates.filter((p) => boostIds.has(p.id));
+      const next =
+        drawNextPost(boostedCandidates, settingsRef.current.orderMode, historyRef.current) ??
+        drawNextPost(candidates, settingsRef.current.orderMode, historyRef.current);
       if (!next) break;
+      boostQueueRef.current = boostQueueRef.current
+        .map((b) => (b.postId === next.id ? { ...b, remaining: b.remaining - 1 } : b))
+        .filter((b) => b.remaining > 0);
       playQueueRef.current = [...playQueueRef.current, next];
       historyRef.current = recordDisplayed(historyRef.current, next);
     }
   }, []);
-
-  // Current index (tracks where we are in playQueueRef)
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const currentIndexRef = useRef(0);
-  currentIndexRef.current = currentIndex;
 
   // ── Room init ──
   useEffect(() => {
