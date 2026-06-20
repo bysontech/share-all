@@ -692,7 +692,7 @@ export default function RoomPage() {
             <div style={categoryIntroStyle}>
               <h2 style={categoryTitleStyle}>共有用の写真・動画</h2>
               <p style={categoryBodyStyle}>
-                写真アルバムと動画の投稿は披露宴後に開放されます。今は表示のみで、投稿ボタンは押せません。
+              披露宴終了後から、みんなで保存・共有する写真や動画を投稿できます。
               </p>
               <div style={categoryContentStyle}>
                 <UploadCard
@@ -711,7 +711,7 @@ export default function RoomPage() {
                   accentColor={accentColor}
                   doneHint="アルバムに追加されました。"
                   disabled
-                  disabledReason="披露宴中はまだ投稿できません。披露宴終了後に開放されます。"
+                  disabledReason="披露宴中はまだ投稿できません。スライドショーをお楽しみください。"
                 />
                 <UploadCard
                   title="動画"
@@ -730,7 +730,7 @@ export default function RoomPage() {
                   doneHint="動画が共有されました。"
                   isVideoCard
                   disabled
-                  disabledReason="披露宴中はまだ投稿できません。披露宴終了後に開放されます。"
+                  disabledReason="披露宴中はまだ投稿できません。スライドショーをお楽しみください。"
                 />
               </div>
             </div>

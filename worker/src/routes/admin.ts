@@ -272,11 +272,11 @@ admin.delete('/rooms/:roomId', async (c) => {
   // Delete DB records in dependency order
   const postIds = (postsResult.results ?? []).map((p) => p.id);
   if (postIds.length > 0) {
-    const placeholders = postIds.map(() => '?').join(',');
     await c.env.DB.prepare(
-      `DELETE FROM media_derivatives WHERE post_id IN (${placeholders})`
+      `DELETE FROM media_derivatives
+       WHERE post_id IN (SELECT id FROM posts WHERE room_id = ?)`
     )
-      .bind(...postIds)
+      .bind(roomId)
       .run();
   }
   await c.env.DB.prepare('DELETE FROM posts WHERE room_id = ?').bind(roomId).run();

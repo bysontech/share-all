@@ -7,6 +7,7 @@ import { createDisplayHistory, drawNextPost, recordDisplayed, type DisplayHistor
 const FADE_MS = 600;
 const CONTROLS_HIDE_MS = 3000;
 const VIEW_URL_REFRESH_BEFORE_EXPIRY = 120;
+const PRELOAD_TIMEOUT_MS = 2500;
 
 // ── Helpers ──
 
@@ -27,6 +28,10 @@ function raf2(): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function preloadImageWithTimeout(url: string, timeoutMs: number): Promise<void> {
+  return Promise.race([preloadImage(url), sleep(timeoutMs)]).then(() => undefined);
 }
 
 // ── Types ──
@@ -128,6 +133,7 @@ export default function SlideshowPage() {
   const playQueueRef = useRef<Post[]>([]);
   const historyRef = useRef<DisplayHistory>(createDisplayHistory());
   const boostQueueRef = useRef<{ postId: string; remaining: number }[]>([]);
+  const pendingBoostAdvanceRef = useRef(false);
 
   const handleNewSlideshowPosts = useCallback((newPosts: Post[]) => {
     const imageNewPosts = newPosts.filter((p) => p.file_type === 'image');
@@ -139,6 +145,7 @@ export default function SlideshowPage() {
 
     // Drop already-generated future entries so new photos can be considered soon.
     playQueueRef.current = playQueueRef.current.slice(0, currentIndexRef.current + 1);
+    pendingBoostAdvanceRef.current = true;
   }, []);
 
   // Posts polling — only slideshow-purpose posts. Use uploaded_at cursor to avoid
@@ -292,8 +299,8 @@ export default function SlideshowPage() {
     setNxtLayer({ postId: post.id, url, post });
     setNxtShown(false);
 
-    // Preload the image before starting the fade
-    await preloadImage(url);
+    // Preload before fade, but do not let a slow image stall the slideshow.
+    await preloadImageWithTimeout(url, PRELOAD_TIMEOUT_MS);
     if (!mountedRef.current) {
       transitioningRef.current = false;
       return;
@@ -351,6 +358,25 @@ export default function SlideshowPage() {
       setCurrentIndex(0);
     }
   }, [displayablePosts.length]);
+
+  // Once a newly uploaded boosted photo has a view URL, show it without waiting
+  // for the next normal playback interval.
+  useEffect(() => {
+    if (!pendingBoostAdvanceRef.current) return;
+    if (!isPlayingRef.current || document.hidden || transitioningRef.current) return;
+    const boostIds = new Set(boostQueueRef.current.filter((b) => b.remaining > 0).map((b) => b.postId));
+    if (boostIds.size === 0) {
+      pendingBoostAdvanceRef.current = false;
+      return;
+    }
+    const hasDisplayableBoost = displayablePostsRef.current.some(
+      (p) => boostIds.has(p.id) && viewUrlCacheRef.current.urls[p.id]
+    );
+    if (!hasDisplayableBoost) return;
+
+    pendingBoostAdvanceRef.current = false;
+    transitionTo(currentIndexRef.current + 1);
+  }, [displayablePosts.length, viewUrlCache, transitionTo]);
 
   // ── Preload next 2 queue entries in background (limit to avoid memory pressure) ──
   useEffect(() => {
