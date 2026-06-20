@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, ApiError, resolvePublicMediaUrl, type Post, type SlideshowSettings } from '../api/client';
 import { usePostsPolling } from '../hooks/usePostsPolling';
+import { createDisplayHistory, drawNextPost, recordDisplayed, type DisplayHistory } from '../utils/slideshowPool';
 
 const FADE_MS = 600;
 const CONTROLS_HIDE_MS = 3000;
@@ -111,14 +112,15 @@ export default function SlideshowPage() {
     orderMode: 'asc',
   });
 
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
   // Posts polling — only slideshow-purpose posts
   const { posts, error: pollError } = usePostsPolling(roomId, 'slideshow');
 
-  const imagePosts = posts
-    .filter((p) => p.file_type === 'image')
-    .sort((a, b) =>
-      settings.orderMode === 'desc' ? b.created_at - a.created_at : a.created_at - b.created_at
-    );
+  // Display order (asc/desc by created_at) is now only a tie-breaker within
+  // the Fresh/Archive draw (see playQueueRef below); no upfront sort needed.
+  const imagePosts = posts.filter((p) => p.file_type === 'image');
 
   // View URL cache
   const [viewUrlCache, setViewUrlCache] = useState<{ urls: Record<string, string>; expiresAt: number }>({
@@ -138,7 +140,26 @@ export default function SlideshowPage() {
   const displayablePostsRef = useRef<Post[]>([]);
   displayablePostsRef.current = displayablePosts;
 
-  // Current index (tracks where we are in displayablePosts)
+  // ── Fresh/Archive playback queue ──
+  // playQueueRef holds the generated display order (grows forward only, never
+  // wraps); historyRef tracks recently-shown posts/participants to keep the
+  // Fresh-priority draw from repeating photos or the same participant back-to-back.
+  // Both live only in memory for the duration of this page (no persistence).
+  const playQueueRef = useRef<Post[]>([]);
+  const historyRef = useRef<DisplayHistory>(createDisplayHistory());
+
+  const ensureQueueAt = useCallback((idx: number) => {
+    const candidates = displayablePostsRef.current;
+    if (candidates.length === 0) return;
+    while (playQueueRef.current.length <= idx) {
+      const next = drawNextPost(candidates, settingsRef.current.orderMode, historyRef.current);
+      if (!next) break;
+      playQueueRef.current = [...playQueueRef.current, next];
+      historyRef.current = recordDisplayed(historyRef.current, next);
+    }
+  }, []);
+
+  // Current index (tracks where we are in playQueueRef)
   const [currentIndex, setCurrentIndex] = useState(0);
   const currentIndexRef = useRef(0);
   currentIndexRef.current = currentIndex;
@@ -217,14 +238,15 @@ export default function SlideshowPage() {
     []
   );
 
-  // ── Core: transition to a specific index ──
+  // ── Core: transition to a specific index in the generated play queue ──
   const transitionTo = useCallback(async (idx: number) => {
     if (transitioningRef.current) return;
-    const dPosts = displayablePostsRef.current;
-    if (dPosts.length === 0) return;
+    if (displayablePostsRef.current.length === 0) return;
+    const safeIdx = Math.max(0, idx);
 
-    const safeIdx = ((idx % dPosts.length) + dPosts.length) % dPosts.length;
-    const post = dPosts[safeIdx];
+    ensureQueueAt(safeIdx);
+    const post = playQueueRef.current[safeIdx];
+    if (!post) return;
     const rawUrl = viewUrlCacheRef.current.urls[post.id];
 
     // If no URL, advance index silently
@@ -234,8 +256,11 @@ export default function SlideshowPage() {
     }
     const url = resolvePublicMediaUrl(rawUrl);
 
-    // Skip if already showing this image
-    if (curLayerRef.current?.postId === post.id) return;
+    // Skip if already showing this image (e.g. only one candidate left)
+    if (curLayerRef.current?.postId === post.id) {
+      setCurrentIndex(safeIdx);
+      return;
+    }
 
     transitioningRef.current = true;
 
@@ -272,42 +297,50 @@ export default function SlideshowPage() {
     setNxtShown(false);
     setCurrentIndex(safeIdx);
     transitioningRef.current = false;
-  }, []);
+  }, [ensureQueueAt]);
 
-  // ── Initial display: show first image without animation ──
+  // ── Initial display: show first queue entry without animation ──
   const initializedRef = useRef(false);
   useEffect(() => {
     if (initializedRef.current) return;
-    const dPosts = displayablePostsRef.current;
-    if (dPosts.length === 0 || viewUrlCacheRef.current.expiresAt === 0) return;
-    const post = dPosts[0];
+    if (displayablePostsRef.current.length === 0 || viewUrlCacheRef.current.expiresAt === 0) return;
+    ensureQueueAt(0);
+    const post = playQueueRef.current[0];
+    if (!post) return;
     const rawUrl = viewUrlCacheRef.current.urls[post.id];
     if (!rawUrl) return;
     initializedRef.current = true;
     setCurLayer({ postId: post.id, url: resolvePublicMediaUrl(rawUrl), post });
     setCurrentIndex(0);
-  }, [displayablePosts.length, viewUrlCache.expiresAt]); // reads from refs inside
+  }, [displayablePosts.length, viewUrlCache.expiresAt, ensureQueueAt]); // reads from refs inside
 
-  // Reset index if displayable list shrinks
+  // Pool went fully empty (e.g. all posts hidden/deleted) — reset to empty state
+  // so playback can re-initialize cleanly once posts reappear.
   useEffect(() => {
-    if (displayablePosts.length > 0 && currentIndexRef.current >= displayablePosts.length) {
+    if (displayablePosts.length === 0 && curLayerRef.current) {
+      playQueueRef.current = [];
+      historyRef.current = createDisplayHistory();
+      initializedRef.current = false;
+      setCurLayer(null);
+      setNxtLayer(null);
+      setNxtShown(false);
       setCurrentIndex(0);
     }
   }, [displayablePosts.length]);
 
-  // ── Preload next 2 images in background (limit to avoid memory pressure) ──
+  // ── Preload next 2 queue entries in background (limit to avoid memory pressure) ──
   useEffect(() => {
-    const dPosts = displayablePostsRef.current;
-    if (dPosts.length <= 1) return;
+    if (displayablePostsRef.current.length === 0) return;
+    ensureQueueAt(currentIndexRef.current + 2);
     const cache = viewUrlCacheRef.current;
     for (let i = 1; i <= 2; i++) {
-      const p = dPosts[(currentIndexRef.current + i) % dPosts.length];
+      const p = playQueueRef.current[currentIndexRef.current + i];
       if (!p) continue;
       const rawUrl = cache.urls[p.id];
       if (!rawUrl) continue;
       preloadImage(resolvePublicMediaUrl(rawUrl)).catch(() => {});
     }
-  }, [currentIndex, viewUrlCache.expiresAt]);
+  }, [currentIndex, viewUrlCache.expiresAt, ensureQueueAt]);
 
   // ── Playback ──
   const [isPlaying, setIsPlaying] = useState(true);
@@ -315,12 +348,11 @@ export default function SlideshowPage() {
   isPlayingRef.current = isPlaying;
 
   useEffect(() => {
-    if (!isPlaying || displayablePosts.length <= 1) return;
+    if (!isPlaying || displayablePosts.length === 0) return;
     const t = setInterval(() => {
       // Skip advance when tab is hidden to avoid transitions nobody sees
       if (!isPlayingRef.current || document.hidden) return;
-      const dPosts = displayablePostsRef.current;
-      transitionTo((currentIndexRef.current + 1) % dPosts.length);
+      transitionTo(currentIndexRef.current + 1);
     }, settings.intervalSeconds * 1000);
     return () => clearInterval(t);
   }, [isPlaying, settings.intervalSeconds, displayablePosts.length, transitionTo]);
@@ -344,16 +376,14 @@ export default function SlideshowPage() {
 
   // ── Navigation ──
   const goNext = useCallback(() => {
-    const dPosts = displayablePostsRef.current;
-    if (dPosts.length === 0) return;
-    transitionTo((currentIndexRef.current + 1) % dPosts.length);
+    if (displayablePostsRef.current.length === 0) return;
+    transitionTo(currentIndexRef.current + 1);
     resetHideTimer();
   }, [transitionTo, resetHideTimer]);
 
   const goPrev = useCallback(() => {
-    const dPosts = displayablePostsRef.current;
-    if (dPosts.length === 0) return;
-    transitionTo((currentIndexRef.current - 1 + dPosts.length) % dPosts.length);
+    if (displayablePostsRef.current.length === 0) return;
+    transitionTo(Math.max(0, currentIndexRef.current - 1));
     resetHideTimer();
   }, [transitionTo, resetHideTimer]);
 
@@ -462,7 +492,7 @@ export default function SlideshowPage() {
   // cur fades out when nxt is fading in; transition only active when nxtLayer present
   const curOpacity = nxtShown ? 0 : 1;
   const nxtOpacity = nxtShown ? 1 : 0;
-  const activePost = curLayer?.post ?? displayablePosts[currentIndex] ?? null;
+  const activePost = curLayer?.post ?? playQueueRef.current[currentIndex] ?? null;
 
   // ── Render ──
   return (
@@ -580,7 +610,7 @@ export default function SlideshowPage() {
           </Link>
           <span style={{ fontSize: 13, color: '#bbb', fontFamily: 'sans-serif' }}>
             {displayablePosts.length > 0
-              ? `${currentIndex + 1} / ${displayablePosts.length}`
+              ? `${(currentIndex % displayablePosts.length) + 1} / ${displayablePosts.length}`
               : ''}
             {pollError && (
               <span style={{ marginLeft: 8, color: '#f88', fontSize: 11 }}>更新エラー</span>
