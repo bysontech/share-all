@@ -103,7 +103,7 @@ function UploadCard({
       )}
 
       {/* Video upload warning */}
-      {isVideoCard && summary.active > 0 && (
+      {isVideoCard && !disabled && (
         <div style={{
           background: hasBg ? 'rgba(0,0,0,0.25)' : '#fff8e1',
           border: `1px solid ${hasBg ? 'rgba(255,255,255,0.2)' : '#ffe082'}`,
@@ -114,7 +114,7 @@ function UploadCard({
           lineHeight: 1.7,
           color: hasBg ? 'rgba(255,255,255,0.9)' : '#5d4037',
         }}>
-          動画は容量が大きいためアップロードに時間がかかります。<br />
+          動画は最大500MBまでアップロードできます。容量が大きい場合は時間がかかります。<br />
           Wi-Fi環境でのアップロードを推奨します。<br />
           完了まで画面を閉じずにお待ちください。
         </div>
@@ -659,7 +659,9 @@ export default function RoomPage() {
             <div style={categoryIntroStyle}>
               <h2 style={categoryTitleStyle}>共有用の写真・動画</h2>
               <p style={categoryBodyStyle}>
-                披露宴後は、みんなで保存・共有する写真や動画を投稿できます。
+                披露宴後は、みんなで保存・共有する写真や動画を投稿できます。<br />
+              写真は一度に最大100枚まで、動画は最大500MBまで投稿できます。<br />
+              ※Wi-Fi環境でのアップロード推奨
               </p>
             </div>
             <UploadCard
