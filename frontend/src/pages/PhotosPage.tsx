@@ -1,6 +1,28 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
+import { getParticipantId } from '../utils/participantId';
+
+const MAX_SELECTION = 100;
+const SAVED_KEY = (roomId: string) => `room:${roomId}:savedPostIds`;
+
+function loadSaved(roomId: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(SAVED_KEY(roomId));
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.filter((v): v is string => typeof v === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSaved(roomId: string, ids: Set<string>) {
+  try {
+    localStorage.setItem(SAVED_KEY(roomId), JSON.stringify([...ids]));
+  } catch {
+    // localStorage failure is non-fatal; the download itself already happened.
+  }
+}
 
 function mimeToExt(mime: string): string {
   const map: Record<string, string> = {
@@ -83,10 +105,30 @@ export default function PhotosPage() {
   const [previewPostId, setPreviewPostId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [saved, setSaved] = useState<Set<string>>(() => loadSaved(roomId ?? ''));
+  const [selectionMessage, setSelectionMessage] = useState('');
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const selfParticipantId = roomId ? getParticipantId(roomId) : null;
+  const isDragSelectingRef = useRef(false);
+  const lastDragPostIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    function stopDragSelect() {
+      isDragSelectingRef.current = false;
+      lastDragPostIdRef.current = null;
+    }
+
+    window.addEventListener('pointerup', stopDragSelect);
+    window.addEventListener('pointercancel', stopDragSelect);
+    return () => {
+      window.removeEventListener('pointerup', stopDragSelect);
+      window.removeEventListener('pointercancel', stopDragSelect);
+    };
+  }, []);
 
   useEffect(() => {
     if (!roomId) return;
+    setSaved(loadSaved(roomId));
     let cancelled = false;
 
     async function loadPhotos() {
@@ -144,12 +186,15 @@ export default function PhotosPage() {
     setProgress({ current: 0, total: targets.length });
     let urls: Record<string, string> = {};
     try {
-      const res = await api.getViewUrls(roomId, targets.map(p => p.id));
-      urls = res.viewUrls;
+      for (const ids of chunk(targets.map(p => p.id), 50)) {
+        const res = await api.getViewUrls(roomId, ids);
+        Object.assign(urls, res.viewUrls);
+      }
     } catch {
       setProgress(null);
       return;
     }
+    const newSaved = new Set(saved);
     let done = 0;
     for (const [index, post] of targets.entries()) {
       const url = urls[post.id];
@@ -165,12 +210,15 @@ export default function PhotosPage() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
+        newSaved.add(post.id);
       } catch { /* skip */ }
       done++;
       setProgress({ current: done, total: targets.length });
     }
+    setSaved(newSaved);
+    saveSaved(roomId, newSaved);
     setProgress(null);
-  }, [roomId]);
+  }, [roomId, saved]);
 
   async function handleDownload(post: Post) {
     await downloadPosts([post]);
@@ -178,26 +226,72 @@ export default function PhotosPage() {
 
   function toggleSelectionMode() {
     setSelectionMode(m => {
-      if (m) setSelected(new Set());
+      if (m) {
+        setSelected(new Set());
+        setSelectionMessage('');
+      }
+      isDragSelectingRef.current = false;
+      lastDragPostIdRef.current = null;
       setPreviewPostId(null);
       return !m;
+    });
+  }
+
+  function addSelect(id: string) {
+    setSelected(prev => {
+      if (prev.has(id)) return prev;
+      if (prev.size >= MAX_SELECTION) {
+        setSelectionMessage(`一度に選択できる写真は${MAX_SELECTION}枚までです。`);
+        return prev;
+      }
+      const next = new Set(prev);
+      next.add(id);
+      setSelectionMessage('');
+      return next;
     });
   }
 
   function toggleSelect(id: string) {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        setSelectionMessage('');
+      } else if (next.size >= MAX_SELECTION) {
+        setSelectionMessage(`一度に選択できる写真は${MAX_SELECTION}枚までです。`);
+      } else {
+        next.add(id);
+        setSelectionMessage('');
+      }
       return next;
     });
   }
 
   function handleTileClick(post: Post) {
-    if (selectionMode) {
-      toggleSelect(post.id);
-    } else if (viewUrls[post.id]) {
+    if (selectionMode) return;
+    if (viewUrls[post.id]) {
       setPreviewPostId(post.id);
     }
+  }
+
+  function handleTilePointerDown(e: React.PointerEvent<HTMLDivElement>, id: string) {
+    if (!selectionMode) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    isDragSelectingRef.current = true;
+    lastDragPostIdRef.current = id;
+    toggleSelect(id);
+  }
+
+  function handleGridPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!selectionMode || !isDragSelectingRef.current) return;
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const tile = target?.closest('[data-photo-id]') as HTMLElement | null | undefined;
+    const id = tile?.dataset.photoId;
+    if (!id || id === lastDragPostIdRef.current) return;
+    lastDragPostIdRef.current = id;
+    addSelect(id);
+    e.preventDefault();
   }
 
   const accentColor = '#b8860b';
@@ -263,18 +357,23 @@ export default function PhotosPage() {
 
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 16px 40px' }}>
         {selectionMode && posts.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            <button type="button" style={secondaryBtn} onClick={() => setSelected(new Set(posts.map(p => p.id)))}>全選択</button>
-            <button type="button" style={secondaryBtn} onClick={() => setSelected(new Set())}>全解除</button>
-            <button
-              type="button"
-              style={selected.size > 0 && !isDownloading ? primaryBtn : disabledBtn}
-              disabled={selected.size === 0 || isDownloading}
-              onClick={() => downloadPosts(posts.filter(p => selected.has(p.id)))}
-            >
-              選択した写真を保存 ({selected.size})
-            </button>
-          </div>
+          <>
+            <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
+              選択中: {selected.size} / {MAX_SELECTION}
+              {selectionMessage && <span style={{ marginLeft: 8, color: '#b85c00' }}>{selectionMessage}</span>}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+              <button type="button" style={secondaryBtn} onClick={() => { setSelected(new Set()); setSelectionMessage(''); }}>全解除</button>
+              <button
+                type="button"
+                style={selected.size > 0 && !isDownloading ? primaryBtn : disabledBtn}
+                disabled={selected.size === 0 || isDownloading}
+                onClick={() => downloadPosts(posts.filter(p => selected.has(p.id)))}
+              >
+                選択した写真を保存 ({selected.size})
+              </button>
+            </div>
+          </>
         )}
         {progress && (
           <p style={{ marginBottom: 12, fontSize: 13, color: '#666' }}>
@@ -286,13 +385,20 @@ export default function PhotosPage() {
             <p style={{ margin: 0 }}>まだアルバム用の写真はありません</p>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 6 }}>
+          <div
+            onPointerMove={handleGridPointerMove}
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 6 }}
+          >
             {posts.map(post => {
               const url = viewUrls[post.id];
               const isSelected = selected.has(post.id);
+              const isMine = !!selfParticipantId && post.participant_id === selfParticipantId;
+              const isSaved = saved.has(post.id);
               return (
                 <div
                   key={post.id}
+                  data-photo-id={post.id}
+                  onPointerDown={(e) => handleTilePointerDown(e, post.id)}
                   onClick={() => handleTileClick(post)}
                   style={{
                     position: 'relative', aspectRatio: '1', borderRadius: 8, overflow: 'hidden',
@@ -300,6 +406,8 @@ export default function PhotosPage() {
                     border: isSelected ? `3px solid ${accentColor}` : '3px solid transparent',
                     boxSizing: 'border-box',
                     WebkitTapHighlightColor: 'transparent',
+                    touchAction: selectionMode ? 'none' : undefined,
+                    userSelect: selectionMode ? 'none' : undefined,
                   }}
                 >
                   {url ? (
@@ -312,10 +420,36 @@ export default function PhotosPage() {
                   )}
                   {selectionMode && isSelected && (
                     <div style={{
-                      position: 'absolute', top: 5, right: 5, width: 22, height: 22, borderRadius: '50%',
+                      position: 'absolute', right: 5, bottom: 5, width: 22, height: 22, borderRadius: '50%',
                       background: accentColor, display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: 13, color: '#fff', fontWeight: 'bold', pointerEvents: 'none',
                     }}>✓</div>
+                  )}
+                  {isMine && (
+                    <div style={{
+                      position: 'absolute', top: 5, left: 5,
+                      background: 'rgba(184, 134, 11, 0.92)',
+                      color: '#fff',
+                      borderRadius: 999,
+                      padding: '3px 6px',
+                      fontSize: 10,
+                      fontWeight: 'bold',
+                      lineHeight: 1,
+                      pointerEvents: 'none',
+                    }}>自分</div>
+                  )}
+                  {isSaved && (
+                    <div style={{
+                      position: 'absolute', top: 5, right: 5,
+                      background: 'rgba(34, 34, 34, 0.72)',
+                      color: '#fff',
+                      borderRadius: 999,
+                      padding: '3px 6px',
+                      fontSize: 10,
+                      fontWeight: 'bold',
+                      lineHeight: 1,
+                      pointerEvents: 'none',
+                    }}>保存済み</div>
                   )}
                 </div>
               );
