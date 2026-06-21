@@ -356,7 +356,10 @@ posts.get('/', async (c) => {
   if ('error' in roomResult) return err(roomResult.error, roomResult.status);
 
   const since = c.req.query('since');
-  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 100);
+  const requestedLimit = parseInt(c.req.query('limit') ?? '50', 10);
+  const requestedOffset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 50;
+  const offset = Number.isFinite(requestedOffset) ? Math.max(requestedOffset, 0) : 0;
   const purposeFilter = c.req.query('post_purpose');
   const cursor = c.req.query('cursor');
   const useUploadedAtCursor = cursor === 'uploaded_at';
@@ -382,11 +385,11 @@ posts.get('/', async (c) => {
        FROM posts
        WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'${cursorClause}${purposeClause}
        ORDER BY ${orderBy}
-       LIMIT ?`
+       LIMIT ? OFFSET ?`
     );
     const bound = purposeFilter
-      ? stmt.bind(roomId, sinceValue, purposeFilter, limit)
-      : stmt.bind(roomId, sinceValue, limit);
+      ? stmt.bind(roomId, sinceValue, purposeFilter, limit, offset)
+      : stmt.bind(roomId, sinceValue, limit, offset);
     const { results: rows } = await bound.all<Row>();
     results = rows;
   } else {
@@ -395,11 +398,11 @@ posts.get('/', async (c) => {
        FROM posts
        WHERE room_id = ? AND upload_status = 'uploaded' AND status = 'visible'${purposeClause}
        ORDER BY created_at ASC
-       LIMIT ?`
+       LIMIT ? OFFSET ?`
     );
     const bound = purposeFilter
-      ? stmt.bind(roomId, purposeFilter, limit)
-      : stmt.bind(roomId, limit);
+      ? stmt.bind(roomId, purposeFilter, limit, offset)
+      : stmt.bind(roomId, limit, offset);
     const { results: rows } = await bound.all<Row>();
     results = rows;
   }

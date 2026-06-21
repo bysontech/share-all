@@ -1,14 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, ApiError, resolvePublicMediaUrl, type RoomInfo, type BootstrapTheme, type EventMode } from '../api/client';
-import { useUploadQueue, MAX_RETRIES } from '../hooks/useUploadQueue';
-import type { QueueItem } from '../hooks/useUploadQueue';
+import { useUploadQueue } from '../hooks/useUploadQueue';
 import { getOrCreateParticipantId } from '../utils/participantId';
-
-const STATUS_LABEL: Record<QueueItem['status'], string> = {
-  pending: '待機中', uploading: 'アップロード中',
-  completing: '登録中', done: '完了', error: 'エラー',
-};
 
 const SLIDESHOW_MAX = 10;
 
@@ -54,10 +48,8 @@ interface UploadCardProps {
   title: string;
   desc: string;
   accept: string;
-  items: QueueItem[];
   summary: { total: number; active: number; done: number; error: number; uploadedBytes: number; totalBytes: number };
   addFiles: (files: File[]) => void;
-  retryItem: (id: string) => void;
   clearDone: () => void;
   hasBg: boolean;
   primaryBtnStyle: React.CSSProperties;
@@ -72,7 +64,7 @@ interface UploadCardProps {
 }
 
 function UploadCard({
-  title, desc, accept, items, summary, addFiles, retryItem, clearDone,
+  title, desc, accept, summary, addFiles, clearDone,
   hasBg, primaryBtnStyle, cardStyle, textColor, accentColor, badge, doneHint, isVideoCard,
   disabled = false, disabledReason,
 }: UploadCardProps) {
@@ -183,76 +175,6 @@ function UploadCard({
             )}
           </div>
         </div>
-      )}
-
-      {items.length > 0 && (
-        <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 8px' }}>
-          {items.map(item => (
-            <li key={item.id} style={{ padding: '6px 0', borderBottom: `1px solid ${hasBg ? 'rgba(255,255,255,0.1)' : '#f0f0f0'}`, fontSize: 13 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{
-                  width: 56, flexShrink: 0, fontSize: 11, padding: '4px', borderRadius: 3, textAlign: 'center',
-                  background: hasBg
-                    ? item.status === 'done' ? 'rgba(46, 125, 50, 0.42)'
-                      : item.status === 'error' ? 'rgba(183, 28, 28, 0.42)'
-                        : item.status === 'pending' ? 'rgba(255,255,255,0.18)'
-                          : 'rgba(245, 166, 35, 0.38)'
-                    : item.status === 'done' ? '#d4edda'
-                      : item.status === 'error' ? '#f8d7da'
-                        : item.status === 'pending' ? '#e2e3e5'
-                          : '#fff3cd',
-                  color: hasBg ? '#fff' : '#333',
-                }}>{STATUS_LABEL[item.status]}</span>
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.file.name}</span>
-                <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.7 }}>{(item.file.size / 1024 / 1024).toFixed(1)}MB</span>
-                {item.status === 'error' && item.retryCount < MAX_RETRIES && (
-                  <button
-                    onClick={() => retryItem(item.id)}
-                    style={{
-                      fontSize: 11,
-                      padding: '6px 10px',
-                      cursor: 'pointer',
-                      flexShrink: 0,
-                      minHeight: 32,
-                      borderRadius: 4,
-                      border: hasBg ? '1px solid rgba(255,255,255,0.25)' : undefined,
-                      background: hasBg ? 'rgba(255,255,255,0.14)' : undefined,
-                      color: hasBg ? '#fff' : undefined,
-                    }}
-                  >再試行</button>
-                )}
-              </div>
-
-              {/* Per-file progress bar */}
-              {item.status === 'uploading' && item.totalBytes > 0 && (
-                <div style={{ marginTop: 5, paddingLeft: 64 }}>
-                  <div style={{ height: 4, background: 'rgba(128,128,128,0.25)', borderRadius: 2, overflow: 'hidden', marginBottom: 3 }}>
-                    <div style={{
-                      height: '100%',
-                      width: `${Math.min(100, Math.round(item.uploadedBytes / item.totalBytes * 100))}%`,
-                      background: accentColor,
-                      transition: 'width 0.25s linear',
-                      borderRadius: 2,
-                    }} />
-                  </div>
-                  <div style={{ fontSize: 11, color: textColor, display: 'flex', gap: 8, opacity: 0.85 }}>
-                    <span>{Math.min(100, Math.round(item.uploadedBytes / item.totalBytes * 100))}%</span>
-                    <span>
-                      {(item.uploadedBytes / 1024 / 1024).toFixed(1)} / {(item.totalBytes / 1024 / 1024).toFixed(1)} MB
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {item.status === 'error' && (
-                <p style={{ margin: '2px 0 0 64px', fontSize: 11, color: '#c00' }}>
-                  {item.error}
-                  {item.retryCount >= MAX_RETRIES && ' (再試行上限に達しました)'}
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
       )}
 
       {summary.done > 0 && summary.active === 0 && doneHint && (
@@ -673,10 +595,8 @@ export default function RoomPage() {
                     title="写真"
                     desc={`会場のスクリーンに映す写真を選んでください。最大${SLIDESHOW_MAX}枚まで投稿できます。`}
                     accept={IMAGE_ACCEPT}
-                    items={slideshowQueue.items}
                     summary={slideshowQueue.summary}
                     addFiles={slideshowQueue.addFiles}
-                    retryItem={slideshowQueue.retryItem}
                     clearDone={slideshowQueue.clearDone}
                     hasBg={hasBg}
                     primaryBtnStyle={primaryBtnStyle}
@@ -699,10 +619,8 @@ export default function RoomPage() {
                   title="写真"
                   desc="思い出の写真を共有してください。"
                   accept={IMAGE_ACCEPT}
-                  items={albumQueue.items}
                   summary={albumQueue.summary}
                   addFiles={albumQueue.addFiles}
-                  retryItem={albumQueue.retryItem}
                   clearDone={albumQueue.clearDone}
                   hasBg={hasBg}
                   primaryBtnStyle={primaryBtnStyle}
@@ -717,10 +635,8 @@ export default function RoomPage() {
                   title="動画"
                   desc="思い出の動画を共有してください（MP4・MOV）。"
                   accept={VIDEO_ACCEPT}
-                  items={videoQueue.items}
                   summary={videoQueue.summary}
                   addFiles={videoQueue.addFiles}
-                  retryItem={videoQueue.retryItem}
                   clearDone={videoQueue.clearDone}
                   hasBg={hasBg}
                   primaryBtnStyle={primaryBtnStyle}
@@ -750,10 +666,8 @@ export default function RoomPage() {
               title="共有アルバム用写真"
               desc="みんなで保存・共有する写真を投稿してください。"
               accept={IMAGE_ACCEPT}
-              items={albumQueue.items}
               summary={albumQueue.summary}
               addFiles={albumQueue.addFiles}
-              retryItem={albumQueue.retryItem}
               clearDone={albumQueue.clearDone}
               hasBg={hasBg}
               primaryBtnStyle={primaryBtnStyle}
@@ -766,10 +680,8 @@ export default function RoomPage() {
               title="動画"
               desc="思い出の動画を共有してください（MP4・MOV）。"
               accept={VIDEO_ACCEPT}
-              items={videoQueue.items}
               summary={videoQueue.summary}
               addFiles={videoQueue.addFiles}
-              retryItem={videoQueue.retryItem}
               clearDone={videoQueue.clearDone}
               hasBg={hasBg}
               primaryBtnStyle={primaryBtnStyle}
@@ -788,7 +700,7 @@ export default function RoomPage() {
                   to={`/room/${roomId}/photos`}
                   style={{ ...primaryBtnStyle, textDecoration: 'none', fontSize: 14, padding: '12px 24px' }}
                 >
-                  写真アルバム
+                  写真一覧
                 </Link>
                 <Link
                   to={`/room/${roomId}/videos`}

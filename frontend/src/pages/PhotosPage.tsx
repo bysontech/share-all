@@ -16,6 +16,12 @@ function buildDownloadFilename(post: Post, sequence: number): string {
   return `photo_${seq}_${short}.${mimeToExt(post.mime_type)}`;
 }
 
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
 // ---- Preview Modal ----
 
 interface PreviewModalProps {
@@ -81,18 +87,43 @@ export default function PhotosPage() {
 
   useEffect(() => {
     if (!roomId) return;
+    let cancelled = false;
+
+    async function loadPhotos() {
+      const pageSize = 100;
+      const allPosts: Post[] = [];
+      for (let offset = 0; ; offset += pageSize) {
+        const res = await api.getPosts(roomId!, undefined, 'album', undefined, pageSize, offset);
+        allPosts.push(...res.posts);
+        if (res.posts.length < pageSize) break;
+      }
+
+      const imagePosts = allPosts.filter(p => p.file_type === 'image');
+      if (cancelled) return;
+      setPosts(imagePosts);
+      if (imagePosts.length === 0) return;
+
+      const urls: Record<string, string> = {};
+      for (const ids of chunk(imagePosts.map(p => p.id), 50)) {
+        const res = await api.getViewUrls(roomId!, ids, undefined, 'display');
+        Object.assign(urls, res.viewUrls);
+      }
+      if (!cancelled) setViewUrls(urls);
+    }
+
     setLoading(true);
-    api.getPosts(roomId, undefined, 'album')
-      .then(r => {
-        const imagePosts = r.posts.filter(p => p.file_type === 'image');
-        setPosts(imagePosts);
-        if (imagePosts.length === 0) { setLoading(false); return; }
-        return api.getViewUrls(roomId, imagePosts.map(p => p.id), undefined, 'display').then(v =>
-          setViewUrls(v.viewUrls)
-        );
+    setError('');
+    setPosts([]);
+    setViewUrls({});
+    loadPhotos()
+      .catch(() => {
+        if (!cancelled) setError('データの取得に失敗しました。');
       })
-      .catch(() => setError('データの取得に失敗しました。'))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
   }, [roomId]);
 
   const previewablePosts = posts.filter(p => viewUrls[p.id]);

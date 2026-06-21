@@ -219,12 +219,16 @@ export const api = {
     roomId: string,
     since?: number,
     postPurpose?: 'slideshow' | 'album' | 'video',
-    cursor?: 'created_at' | 'uploaded_at'
+    cursor?: 'created_at' | 'uploaded_at',
+    limit?: number,
+    offset?: number
   ) => {
     const params = new URLSearchParams();
     if (since != null) params.set('since', String(since));
     if (postPurpose) params.set('post_purpose', postPurpose);
     if (cursor) params.set('cursor', cursor);
+    if (limit != null) params.set('limit', String(limit));
+    if (offset != null) params.set('offset', String(offset));
     const qs = params.size > 0 ? `?${params}` : '';
     return request<PostsResponse>(`/rooms/${roomId}/posts${qs}`);
   },
