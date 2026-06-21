@@ -134,13 +134,15 @@ export default function SlideshowPage() {
   const historyRef = useRef<DisplayHistory>(createDisplayHistory());
   const boostQueueRef = useRef<{ postId: string; remaining: number }[]>([]);
   const pendingBoostAdvanceRef = useRef(false);
+  const boostAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const boostAdvanceScheduledRef = useRef(false);
 
   const handleNewSlideshowPosts = useCallback((newPosts: Post[]) => {
     const imageNewPosts = newPosts.filter((p) => p.file_type === 'image');
     if (imageNewPosts.length === 0) return;
 
     const existing = new Map(boostQueueRef.current.map((b) => [b.postId, b.remaining]));
-    imageNewPosts.forEach((p) => existing.set(p.id, Math.max(existing.get(p.id) ?? 0, 2)));
+    imageNewPosts.forEach((p) => existing.set(p.id, Math.max(existing.get(p.id) ?? 0, 1)));
     boostQueueRef.current = [...existing.entries()].map(([postId, remaining]) => ({ postId, remaining }));
 
     // Drop already-generated future entries so new photos can be considered soon.
@@ -265,6 +267,7 @@ export default function SlideshowPage() {
   useEffect(
     () => () => {
       mountedRef.current = false;
+      if (boostAdvanceTimerRef.current) clearTimeout(boostAdvanceTimerRef.current);
     },
     []
   );
@@ -359,11 +362,11 @@ export default function SlideshowPage() {
     }
   }, [displayablePosts.length]);
 
-  // Once a newly uploaded boosted photo has a view URL, show it without waiting
-  // for the next normal playback interval.
+  // Once a newly uploaded boosted photo has a view URL, wait one normal interval
+  // from that point before showing it. This avoids sudden jumps right after upload.
   useEffect(() => {
     if (!pendingBoostAdvanceRef.current) return;
-    if (!isPlayingRef.current || document.hidden || transitioningRef.current) return;
+    if (!isPlayingRef.current || document.hidden || transitioningRef.current || boostAdvanceScheduledRef.current) return;
     const boostIds = new Set(boostQueueRef.current.filter((b) => b.remaining > 0).map((b) => b.postId));
     if (boostIds.size === 0) {
       pendingBoostAdvanceRef.current = false;
@@ -375,7 +378,17 @@ export default function SlideshowPage() {
     if (!hasDisplayableBoost) return;
 
     pendingBoostAdvanceRef.current = false;
-    transitionTo(currentIndexRef.current + 1);
+    boostAdvanceScheduledRef.current = true;
+    if (boostAdvanceTimerRef.current) clearTimeout(boostAdvanceTimerRef.current);
+    boostAdvanceTimerRef.current = setTimeout(() => {
+      boostAdvanceTimerRef.current = null;
+      boostAdvanceScheduledRef.current = false;
+      if (!isPlayingRef.current || document.hidden || transitioningRef.current) {
+        pendingBoostAdvanceRef.current = true;
+        return;
+      }
+      transitionTo(currentIndexRef.current + 1);
+    }, settingsRef.current.intervalSeconds * 1000);
   }, [displayablePosts.length, viewUrlCache, transitionTo]);
 
   // ── Preload next 2 queue entries in background (limit to avoid memory pressure) ──
@@ -402,6 +415,7 @@ export default function SlideshowPage() {
     const t = setInterval(() => {
       // Skip advance when tab is hidden to avoid transitions nobody sees
       if (!isPlayingRef.current || document.hidden) return;
+      if (boostAdvanceScheduledRef.current) return;
       transitionTo(currentIndexRef.current + 1);
     }, settings.intervalSeconds * 1000);
     return () => clearInterval(t);
