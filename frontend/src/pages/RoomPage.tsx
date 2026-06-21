@@ -5,6 +5,7 @@ import { useUploadQueue } from '../hooks/useUploadQueue';
 import { getOrCreateParticipantId } from '../utils/participantId';
 
 const SLIDESHOW_MAX = 10;
+const VIDEO_SELECTION_MAX_BYTES = 500 * 1024 * 1024;
 
 function useBootstrap(roomId: string | undefined) {
   const [room, setRoom] = useState<RoomInfo | null>(null);
@@ -48,8 +49,9 @@ interface UploadCardProps {
   title: string;
   desc: string;
   accept: string;
-  summary: { total: number; active: number; done: number; error: number; uploadedBytes: number; totalBytes: number };
+  summary: { total: number; pending: number; active: number; done: number; error: number; uploadedBytes: number; totalBytes: number };
   addFiles: (files: File[]) => void;
+  cancelPending: () => void;
   hasBg: boolean;
   primaryBtnStyle: React.CSSProperties;
   cardStyle: React.CSSProperties;
@@ -59,14 +61,15 @@ interface UploadCardProps {
   doneHint?: string;
   isVideoCard?: boolean;
   maxFilesPerSelection?: number;
+  maxBytesPerSelection?: number;
   disabled?: boolean;
   disabledReason?: string;
 }
 
 function UploadCard({
-  title, desc, accept, summary, addFiles,
+  title, desc, accept, summary, addFiles, cancelPending,
   hasBg, primaryBtnStyle, cardStyle, textColor, accentColor, badge, doneHint, isVideoCard,
-  maxFilesPerSelection, disabled = false, disabledReason,
+  maxFilesPerSelection, maxBytesPerSelection, disabled = false, disabledReason,
 }: UploadCardProps) {
   const [selectionError, setSelectionError] = useState('');
 
@@ -78,13 +81,27 @@ function UploadCard({
     const selected = Array.from(e.target.files ?? []).filter(f =>
       accept.split(',').some(a => f.type === a.trim())
     );
-    const limited =
+    let limited =
       maxFilesPerSelection && selected.length > maxFilesPerSelection
         ? selected.slice(0, maxFilesPerSelection)
         : selected;
 
+    if (maxBytesPerSelection) {
+      let total = 0;
+      limited = limited.filter((file) => {
+        if (file.size > maxBytesPerSelection) return false;
+        if (total + file.size > maxBytesPerSelection) return false;
+        total += file.size;
+        return true;
+      });
+    }
+
     if (selected.length > limited.length) {
-      setSelectionError(`一度に選択できる写真は${maxFilesPerSelection}枚までです。残りは分けてアップロードしてください。`);
+      if (maxBytesPerSelection) {
+        setSelectionError(`動画は一度に合計${Math.round(maxBytesPerSelection / 1024 / 1024)}MBまでです。残りは分けてアップロードしてください。`);
+      } else {
+        setSelectionError(`一度に選択できる写真は${maxFilesPerSelection}枚までです。残りは分けてアップロードしてください。`);
+      }
     } else {
       setSelectionError('');
     }
@@ -121,7 +138,7 @@ function UploadCard({
       )}
 
       {/* Video upload warning */}
-      {isVideoCard && !disabled && (
+      {isVideoCard && !disabled && summary.active > 0 && (
         <div style={{
           background: hasBg ? 'rgba(0,0,0,0.25)' : '#fff8e1',
           border: `1px solid ${hasBg ? 'rgba(255,255,255,0.2)' : '#ffe082'}`,
@@ -188,9 +205,28 @@ function UploadCard({
           )}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
             <span>全{summary.total}件</span>
+            {summary.pending > 0 && <span>待機中: {summary.pending}</span>}
             {summary.active > 0 && <span>処理中: {summary.active}</span>}
             {summary.done > 0 && <span>完了: {summary.done}</span>}
             {summary.error > 0 && <span style={{ color: '#f88' }}>エラー: {summary.error}</span>}
+            {summary.pending > 0 && (
+              <button
+                type="button"
+                onClick={cancelPending}
+                style={{
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  padding: '4px 8px',
+                  borderRadius: 3,
+                  minHeight: 28,
+                  border: hasBg ? '1px solid rgba(255,255,255,0.24)' : '1px solid #d8cdb8',
+                  background: hasBg ? 'rgba(255,255,255,0.14)' : '#f3eadb',
+                  color: hasBg ? '#fff' : '#6a5530',
+                }}
+              >
+                待機中を中止
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -615,6 +651,7 @@ export default function RoomPage() {
                     accept={IMAGE_ACCEPT}
                     summary={slideshowQueue.summary}
                     addFiles={slideshowQueue.addFiles}
+                    cancelPending={slideshowQueue.cancelPending}
                     hasBg={hasBg}
                     primaryBtnStyle={primaryBtnStyle}
                     cardStyle={nestedCardStyle}
@@ -639,6 +676,7 @@ export default function RoomPage() {
                   accept={IMAGE_ACCEPT}
                   summary={albumQueue.summary}
                   addFiles={albumQueue.addFiles}
+                  cancelPending={albumQueue.cancelPending}
                   hasBg={hasBg}
                   primaryBtnStyle={primaryBtnStyle}
                   cardStyle={nestedCardStyle}
@@ -655,6 +693,7 @@ export default function RoomPage() {
                   accept={VIDEO_ACCEPT}
                   summary={videoQueue.summary}
                   addFiles={videoQueue.addFiles}
+                  cancelPending={videoQueue.cancelPending}
                   hasBg={hasBg}
                   primaryBtnStyle={primaryBtnStyle}
                   cardStyle={nestedCardStyle}
@@ -662,6 +701,7 @@ export default function RoomPage() {
                   accentColor={accentColor}
                   doneHint="動画が共有されました。"
                   isVideoCard
+                  maxBytesPerSelection={VIDEO_SELECTION_MAX_BYTES}
                   disabled
                   disabledReason="披露宴中はまだ投稿できません。スライドショーをお楽しみください。"
                 />
@@ -687,6 +727,7 @@ export default function RoomPage() {
               accept={IMAGE_ACCEPT}
               summary={albumQueue.summary}
               addFiles={albumQueue.addFiles}
+              cancelPending={albumQueue.cancelPending}
               hasBg={hasBg}
               primaryBtnStyle={primaryBtnStyle}
               cardStyle={cardStyle}
@@ -701,6 +742,7 @@ export default function RoomPage() {
               accept={VIDEO_ACCEPT}
               summary={videoQueue.summary}
               addFiles={videoQueue.addFiles}
+              cancelPending={videoQueue.cancelPending}
               hasBg={hasBg}
               primaryBtnStyle={primaryBtnStyle}
               cardStyle={cardStyle}
@@ -708,6 +750,7 @@ export default function RoomPage() {
               accentColor={accentColor}
               doneHint="動画が共有されました。"
               isVideoCard
+              maxBytesPerSelection={VIDEO_SELECTION_MAX_BYTES}
             />
             <div style={{ ...cardStyle, textAlign: 'center', marginBottom: 0 }}>
               <p style={{ margin: '0 0 14px', fontSize: 13, color: textColor }}>

@@ -347,6 +347,16 @@ export function useUploadQueue({ roomId, nickname, participantId, postPurpose, o
     });
   }, []);
 
+  const cancelPending = useCallback(() => {
+    const pendingIds = new Set(queueRef.current);
+    queueRef.current = [];
+    setItems((prev) => {
+      const next = prev.filter((it) => !pendingIds.has(it.id));
+      pendingIds.forEach((id) => itemsRef.current.delete(id));
+      return next;
+    });
+  }, []);
+
   const summary = {
     total: items.length,
     pending: items.filter((it) => it.status === 'pending').length,
@@ -357,5 +367,5 @@ export function useUploadQueue({ roomId, nickname, participantId, postPurpose, o
     totalBytes: items.reduce((sum, it) => sum + it.totalBytes, 0),
   };
 
-  return { items, addFiles, retryItem, clearDone, summary };
+  return { items, addFiles, retryItem, clearDone, cancelPending, summary };
 }

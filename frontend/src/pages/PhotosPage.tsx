@@ -4,6 +4,7 @@ import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 import { getParticipantId } from '../utils/participantId';
 
 const MAX_SELECTION = 100;
+const PAGE_SIZE = 100;
 const SAVED_KEY = (roomId: string) => `room:${roomId}:savedPostIds`;
 
 function loadSaved(roomId: string): Set<string> {
@@ -108,10 +109,17 @@ export default function PhotosPage() {
   const [saved, setSaved] = useState<Set<string>>(() => loadSaved(roomId ?? ''));
   const [selectionMessage, setSelectionMessage] = useState('');
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const selfParticipantId = roomId ? getParticipantId(roomId) : null;
   const isDragSelectingRef = useRef(false);
   const dragStartIndexRef = useRef<number | null>(null);
   const lastDragIndexRef = useRef<number | null>(null);
+  const downloadCancelledRef = useRef(false);
+  const downloadAbortRef = useRef<AbortController | null>(null);
+  const nextOffsetRef = useRef(0);
+  const loadingMoreRef = useRef(false);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     function stopDragSelect() {
@@ -128,38 +136,42 @@ export default function PhotosPage() {
     };
   }, []);
 
+  const fetchViewUrlsForPosts = useCallback(async (imagePosts: Post[]) => {
+    if (!roomId || imagePosts.length === 0) return {};
+    const urls: Record<string, string> = {};
+    for (const ids of chunk(imagePosts.map(p => p.id), 50)) {
+      const res = await api.getViewUrls(roomId, ids, undefined, 'display');
+      Object.assign(urls, res.viewUrls);
+    }
+    return urls;
+  }, [roomId]);
+
   useEffect(() => {
     if (!roomId) return;
     setSaved(loadSaved(roomId));
     let cancelled = false;
-
-    async function loadPhotos() {
-      const pageSize = 100;
-      const allPosts: Post[] = [];
-      for (let offset = 0; ; offset += pageSize) {
-        const res = await api.getPosts(roomId!, undefined, 'album', undefined, pageSize, offset);
-        allPosts.push(...res.posts);
-        if (res.posts.length < pageSize) break;
-      }
-
-      const imagePosts = allPosts.filter(p => p.file_type === 'image');
-      if (cancelled) return;
-      setPosts(imagePosts);
-      if (imagePosts.length === 0) return;
-
-      const urls: Record<string, string> = {};
-      for (const ids of chunk(imagePosts.map(p => p.id), 50)) {
-        const res = await api.getViewUrls(roomId!, ids, undefined, 'display');
-        Object.assign(urls, res.viewUrls);
-      }
-      if (!cancelled) setViewUrls(urls);
-    }
-
     setLoading(true);
     setError('');
     setPosts([]);
     setViewUrls({});
-    loadPhotos()
+    setHasMore(false);
+    nextOffsetRef.current = 0;
+    loadingMoreRef.current = false;
+
+    async function loadInitialPhotos() {
+      const res = await api.getPosts(roomId!, undefined, 'album', undefined, PAGE_SIZE, 0);
+      const imagePosts = res.posts.filter(p => p.file_type === 'image');
+      if (cancelled) return;
+
+      nextOffsetRef.current = res.posts.length;
+      setHasMore(res.posts.length === PAGE_SIZE);
+      setPosts(imagePosts);
+
+      const urls = await fetchViewUrlsForPosts(imagePosts);
+      if (!cancelled) setViewUrls(urls);
+    }
+
+    loadInitialPhotos()
       .catch(() => {
         if (!cancelled) setError('データの取得に失敗しました。');
       })
@@ -168,7 +180,46 @@ export default function PhotosPage() {
       });
 
     return () => { cancelled = true; };
-  }, [roomId]);
+  }, [roomId, fetchViewUrlsForPosts]);
+
+  const loadMorePhotos = useCallback(async () => {
+    if (!roomId || !hasMore || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const offset = nextOffsetRef.current;
+      const res = await api.getPosts(roomId, undefined, 'album', undefined, PAGE_SIZE, offset);
+      const imagePosts = res.posts.filter(p => p.file_type === 'image');
+
+      nextOffsetRef.current += res.posts.length;
+      setHasMore(res.posts.length === PAGE_SIZE);
+      if (imagePosts.length > 0) {
+        setPosts(prev => [...prev, ...imagePosts]);
+        const urls = await fetchViewUrlsForPosts(imagePosts);
+        setViewUrls(prev => ({ ...prev, ...urls }));
+      }
+    } catch {
+      setError('追加読み込みに失敗しました。');
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [roomId, hasMore, fetchViewUrlsForPosts]);
+
+  useEffect(() => {
+    if (!hasMore) return;
+    const el = loadMoreSentinelRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        loadMorePhotos();
+      }
+    }, { rootMargin: '400px 0px' });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, loadMorePhotos]);
 
   const previewablePosts = posts.filter(p => viewUrls[p.id]);
   const previewIndex = previewPostId ? previewablePosts.findIndex(p => p.id === previewPostId) : -1;
@@ -185,10 +236,12 @@ export default function PhotosPage() {
 
   const downloadPosts = useCallback(async (targets: Post[]) => {
     if (!roomId || targets.length === 0) return;
+    downloadCancelledRef.current = false;
     setProgress({ current: 0, total: targets.length });
     let urls: Record<string, string> = {};
     try {
       for (const ids of chunk(targets.map(p => p.id), 50)) {
+        if (downloadCancelledRef.current) break;
         const res = await api.getViewUrls(roomId, ids);
         Object.assign(urls, res.viewUrls);
       }
@@ -196,15 +249,24 @@ export default function PhotosPage() {
       setProgress(null);
       return;
     }
+    if (downloadCancelledRef.current) {
+      setProgress(null);
+      return;
+    }
     const newSaved = new Set(saved);
     let done = 0;
     for (const [index, post] of targets.entries()) {
+      if (downloadCancelledRef.current) break;
       const url = urls[post.id];
       if (!url) { done++; setProgress({ current: done, total: targets.length }); continue; }
       try {
-        const resp = await fetch(resolvePublicMediaUrl(url));
+        const controller = new AbortController();
+        downloadAbortRef.current = controller;
+        const resp = await fetch(resolvePublicMediaUrl(url), { signal: controller.signal });
+        downloadAbortRef.current = null;
         if (!resp.ok) throw new Error('fetch failed');
         const blob = await resp.blob();
+        if (downloadCancelledRef.current) break;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = buildDownloadFilename(post, index + 1);
@@ -214,6 +276,10 @@ export default function PhotosPage() {
         URL.revokeObjectURL(a.href);
         newSaved.add(post.id);
       } catch { /* skip */ }
+      finally {
+        downloadAbortRef.current = null;
+      }
+      if (downloadCancelledRef.current) break;
       done++;
       setProgress({ current: done, total: targets.length });
     }
@@ -221,6 +287,12 @@ export default function PhotosPage() {
     saveSaved(roomId, newSaved);
     setProgress(null);
   }, [roomId, saved]);
+
+  function cancelDownload() {
+    downloadCancelledRef.current = true;
+    downloadAbortRef.current?.abort();
+    setProgress(null);
+  }
 
   async function handleDownload(post: Post) {
     await downloadPosts([post]);
@@ -400,9 +472,14 @@ export default function PhotosPage() {
 
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '16px 16px 40px' }}>
         {progress && (
-          <p style={{ marginBottom: 12, fontSize: 13, color: '#666' }}>
-            保存中... {progress.current} / {progress.total}
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+            <p style={{ margin: 0, fontSize: 13, color: '#666' }}>
+              保存中... {progress.current} / {progress.total}
+            </p>
+            <button type="button" style={secondaryBtn} onClick={cancelDownload}>
+              中止
+            </button>
+          </div>
         )}
         {posts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '60px 0', color: '#888', fontSize: 14 }}>
@@ -478,6 +555,17 @@ export default function PhotosPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+        {posts.length > 0 && (
+          <div ref={loadMoreSentinelRef} style={{ minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {loadingMore ? (
+              <span style={{ fontSize: 13, color: '#888' }}>追加読み込み中...</span>
+            ) : hasMore ? (
+              <span style={{ fontSize: 12, color: '#aaa' }}>下へスクロールすると続きを読み込みます</span>
+            ) : (
+              <span style={{ fontSize: 12, color: '#aaa' }}>すべて読み込みました</span>
+            )}
           </div>
         )}
       </div>
