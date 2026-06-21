@@ -655,7 +655,7 @@ export default function RoomPage() {
             <div style={categoryIntroStyle}>
               <h2 style={categoryTitleStyle}>スライドショー用の写真</h2>
               <p style={categoryBodyStyle}>
-                披露宴中は、会場スクリーンに流す写真を投稿できます。お気に入りの1枚を選んでください。
+                披露宴中は、会場スクリーンに流す写真を投稿できます。お気に入りの写真を選んでください。
               </p>
               <div style={categoryContentStyle}>
                 {slideshowAtLimit ? (
