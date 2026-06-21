@@ -50,7 +50,6 @@ interface UploadCardProps {
   accept: string;
   summary: { total: number; active: number; done: number; error: number; uploadedBytes: number; totalBytes: number };
   addFiles: (files: File[]) => void;
-  clearDone: () => void;
   hasBg: boolean;
   primaryBtnStyle: React.CSSProperties;
   cardStyle: React.CSSProperties;
@@ -59,15 +58,18 @@ interface UploadCardProps {
   badge?: React.ReactNode;
   doneHint?: string;
   isVideoCard?: boolean;
+  maxFilesPerSelection?: number;
   disabled?: boolean;
   disabledReason?: string;
 }
 
 function UploadCard({
-  title, desc, accept, summary, addFiles, clearDone,
+  title, desc, accept, summary, addFiles,
   hasBg, primaryBtnStyle, cardStyle, textColor, accentColor, badge, doneHint, isVideoCard,
-  disabled = false, disabledReason,
+  maxFilesPerSelection, disabled = false, disabledReason,
 }: UploadCardProps) {
+  const [selectionError, setSelectionError] = useState('');
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     if (disabled) {
       e.target.value = '';
@@ -76,7 +78,18 @@ function UploadCard({
     const selected = Array.from(e.target.files ?? []).filter(f =>
       accept.split(',').some(a => f.type === a.trim())
     );
-    if (selected.length) addFiles(selected);
+    const limited =
+      maxFilesPerSelection && selected.length > maxFilesPerSelection
+        ? selected.slice(0, maxFilesPerSelection)
+        : selected;
+
+    if (selected.length > limited.length) {
+      setSelectionError(`一度に選択できる写真は${maxFilesPerSelection}枚までです。残りは分けてアップロードしてください。`);
+    } else {
+      setSelectionError('');
+    }
+
+    if (limited.length) addFiles(limited);
     e.target.value = '';
   }
 
@@ -91,6 +104,11 @@ function UploadCard({
         {badge}
       </div>
       <p style={{ margin: '0 0 12px', fontSize: 12, color: textColor, lineHeight: 1.5 }}>{desc}</p>
+      {selectionError && (
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: hasBg ? '#ffd6a0' : '#b85c00', lineHeight: 1.6 }}>
+          {selectionError}
+        </p>
+      )}
       {disabled && disabledReason && (
         <p style={{
           margin: '0 0 12px',
@@ -115,6 +133,23 @@ function UploadCard({
           color: hasBg ? 'rgba(255,255,255,0.9)' : '#5d4037',
         }}>
           動画は最大500MBまでアップロードできます。容量が大きい場合は時間がかかります。<br />
+          Wi-Fi環境でのアップロードを推奨します。<br />
+          完了まで画面を閉じずにお待ちください。
+        </div>
+      )}
+
+      {!isVideoCard && !disabled && summary.active > 0 && (
+        <div style={{
+          background: hasBg ? 'rgba(0,0,0,0.25)' : '#fff8e1',
+          border: `1px solid ${hasBg ? 'rgba(255,255,255,0.2)' : '#ffe082'}`,
+          borderRadius: 6,
+          padding: '10px 12px',
+          marginBottom: 12,
+          fontSize: 12,
+          lineHeight: 1.7,
+          color: hasBg ? 'rgba(255,255,255,0.9)' : '#5d4037',
+        }}>
+          写真をアップロード中です。枚数が多い場合は時間がかかります。<br />
           Wi-Fi環境でのアップロードを推奨します。<br />
           完了まで画面を閉じずにお待ちください。
         </div>
@@ -156,23 +191,6 @@ function UploadCard({
             {summary.active > 0 && <span>処理中: {summary.active}</span>}
             {summary.done > 0 && <span>完了: {summary.done}</span>}
             {summary.error > 0 && <span style={{ color: '#f88' }}>エラー: {summary.error}</span>}
-            {summary.done > 0 && (
-              <button
-                onClick={clearDone}
-                style={{
-                  fontSize: 11,
-                  cursor: 'pointer',
-                  padding: '4px 8px',
-                  borderRadius: 3,
-                  minHeight: 28,
-                  border: hasBg ? '1px solid rgba(255,255,255,0.24)' : undefined,
-                  background: hasBg ? 'rgba(255,255,255,0.14)' : undefined,
-                  color: hasBg ? '#fff' : undefined,
-                }}
-              >
-                完了を消す
-              </button>
-            )}
           </div>
         </div>
       )}
@@ -597,7 +615,6 @@ export default function RoomPage() {
                     accept={IMAGE_ACCEPT}
                     summary={slideshowQueue.summary}
                     addFiles={slideshowQueue.addFiles}
-                    clearDone={slideshowQueue.clearDone}
                     hasBg={hasBg}
                     primaryBtnStyle={primaryBtnStyle}
                     cardStyle={nestedCardStyle}
@@ -605,6 +622,7 @@ export default function RoomPage() {
                     accentColor={accentColor}
                     badge={slideshowCountBadge}
                     doneHint="スライドショーに追加されました。"
+                    maxFilesPerSelection={100}
                   />
                 )}
               </div>
@@ -621,13 +639,13 @@ export default function RoomPage() {
                   accept={IMAGE_ACCEPT}
                   summary={albumQueue.summary}
                   addFiles={albumQueue.addFiles}
-                  clearDone={albumQueue.clearDone}
                   hasBg={hasBg}
                   primaryBtnStyle={primaryBtnStyle}
                   cardStyle={nestedCardStyle}
                   textColor={textColor}
                   accentColor={accentColor}
                   doneHint="アルバムに追加されました。"
+                  maxFilesPerSelection={100}
                   disabled
                   disabledReason="披露宴中はまだ投稿できません。スライドショーをお楽しみください。"
                 />
@@ -637,7 +655,6 @@ export default function RoomPage() {
                   accept={VIDEO_ACCEPT}
                   summary={videoQueue.summary}
                   addFiles={videoQueue.addFiles}
-                  clearDone={videoQueue.clearDone}
                   hasBg={hasBg}
                   primaryBtnStyle={primaryBtnStyle}
                   cardStyle={nestedCardStyle}
@@ -670,13 +687,13 @@ export default function RoomPage() {
               accept={IMAGE_ACCEPT}
               summary={albumQueue.summary}
               addFiles={albumQueue.addFiles}
-              clearDone={albumQueue.clearDone}
               hasBg={hasBg}
               primaryBtnStyle={primaryBtnStyle}
               cardStyle={cardStyle}
               textColor={textColor}
               accentColor={accentColor}
               doneHint="アルバムに追加されました。"
+              maxFilesPerSelection={100}
             />
             <UploadCard
               title="動画"
@@ -684,7 +701,6 @@ export default function RoomPage() {
               accept={VIDEO_ACCEPT}
               summary={videoQueue.summary}
               addFiles={videoQueue.addFiles}
-              clearDone={videoQueue.clearDone}
               hasBg={hasBg}
               primaryBtnStyle={primaryBtnStyle}
               cardStyle={cardStyle}
