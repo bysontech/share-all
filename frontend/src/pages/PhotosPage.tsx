@@ -110,12 +110,14 @@ export default function PhotosPage() {
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const selfParticipantId = roomId ? getParticipantId(roomId) : null;
   const isDragSelectingRef = useRef(false);
-  const lastDragPostIdRef = useRef<string | null>(null);
+  const dragStartIndexRef = useRef<number | null>(null);
+  const lastDragIndexRef = useRef<number | null>(null);
 
   useEffect(() => {
     function stopDragSelect() {
       isDragSelectingRef.current = false;
-      lastDragPostIdRef.current = null;
+      dragStartIndexRef.current = null;
+      lastDragIndexRef.current = null;
     }
 
     window.addEventListener('pointerup', stopDragSelect);
@@ -231,21 +233,28 @@ export default function PhotosPage() {
         setSelectionMessage('');
       }
       isDragSelectingRef.current = false;
-      lastDragPostIdRef.current = null;
+      dragStartIndexRef.current = null;
+      lastDragIndexRef.current = null;
       setPreviewPostId(null);
       return !m;
     });
   }
 
-  function addSelect(id: string) {
+  function addSelectRange(fromIndex: number, toIndex: number) {
+    const start = Math.min(fromIndex, toIndex);
+    const end = Math.max(fromIndex, toIndex);
+    const ids = posts.slice(start, end + 1).map((p) => p.id);
+
     setSelected(prev => {
-      if (prev.has(id)) return prev;
-      if (prev.size >= MAX_SELECTION) {
-        setSelectionMessage(`一度に選択できる写真は${MAX_SELECTION}枚までです。`);
-        return prev;
-      }
       const next = new Set(prev);
-      next.add(id);
+      for (const id of ids) {
+        if (next.has(id)) continue;
+        if (next.size >= MAX_SELECTION) {
+          setSelectionMessage(`一度に選択できる写真は${MAX_SELECTION}枚までです。`);
+          return next;
+        }
+        next.add(id);
+      }
       setSelectionMessage('');
       return next;
     });
@@ -274,23 +283,26 @@ export default function PhotosPage() {
     }
   }
 
-  function handleTilePointerDown(e: React.PointerEvent<HTMLDivElement>, id: string) {
+  function handleTilePointerDown(e: React.PointerEvent<HTMLDivElement>, id: string, index: number) {
     if (!selectionMode) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     isDragSelectingRef.current = true;
-    lastDragPostIdRef.current = id;
+    dragStartIndexRef.current = index;
+    lastDragIndexRef.current = index;
     toggleSelect(id);
   }
 
   function handleGridPointerMove(e: React.PointerEvent<HTMLDivElement>) {
     if (!selectionMode || !isDragSelectingRef.current) return;
     const target = document.elementFromPoint(e.clientX, e.clientY);
-    const tile = target?.closest('[data-photo-id]') as HTMLElement | null | undefined;
-    const id = tile?.dataset.photoId;
-    if (!id || id === lastDragPostIdRef.current) return;
-    lastDragPostIdRef.current = id;
-    addSelect(id);
+    const tile = target?.closest('[data-photo-index]') as HTMLElement | null | undefined;
+    const rawIndex = tile?.dataset.photoIndex;
+    const index = rawIndex == null ? NaN : Number(rawIndex);
+    const startIndex = dragStartIndexRef.current;
+    if (!Number.isInteger(index) || startIndex == null || index === lastDragIndexRef.current) return;
+    lastDragIndexRef.current = index;
+    addSelectRange(startIndex, index);
     e.preventDefault();
   }
 
@@ -389,7 +401,7 @@ export default function PhotosPage() {
             onPointerMove={handleGridPointerMove}
             style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 6 }}
           >
-            {posts.map(post => {
+            {posts.map((post, index) => {
               const url = viewUrls[post.id];
               const isSelected = selected.has(post.id);
               const isMine = !!selfParticipantId && post.participant_id === selfParticipantId;
@@ -397,8 +409,8 @@ export default function PhotosPage() {
               return (
                 <div
                   key={post.id}
-                  data-photo-id={post.id}
-                  onPointerDown={(e) => handleTilePointerDown(e, post.id)}
+                  data-photo-index={index}
+                  onPointerDown={(e) => handleTilePointerDown(e, post.id, index)}
                   onClick={() => handleTileClick(post)}
                   style={{
                     position: 'relative', aspectRatio: '1', borderRadius: 8, overflow: 'hidden',
