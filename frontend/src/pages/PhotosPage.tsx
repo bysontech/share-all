@@ -322,6 +322,16 @@ export default function PhotosPage() {
     fontFamily: 'Georgia, "Noto Serif JP", serif',
     color: '#333',
   };
+  const stickyBarStyle: React.CSSProperties = {
+    position: 'sticky',
+    top: 0,
+    zIndex: 20,
+    background: 'rgba(249, 245, 239, 0.92)',
+    backdropFilter: 'blur(10px)',
+    WebkitBackdropFilter: 'blur(10px)',
+    borderBottom: '1px solid rgba(184, 134, 11, 0.14)',
+    boxShadow: '0 6px 18px rgba(80, 55, 20, 0.08)',
+  };
 
   if (loading) return <div style={{ ...outerStyle, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><p style={{ color: '#888' }}>読み込み中...</p></div>;
   if (error) return (
@@ -346,35 +356,34 @@ export default function PhotosPage() {
         />
       )}
 
-      <div style={{ padding: '16px 16px 10px', maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Link to={`/room/${roomId}`} style={{ fontSize: 14, color: accentColor, textDecoration: 'none', minHeight: 44, display: 'flex', alignItems: 'center' }}>← 戻る</Link>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 'normal', color: accentColor, flex: 1 }}>写真アルバム</h1>
-        <span style={{ fontSize: 12, color: '#888' }}>{posts.length}枚</span>
-        {posts.length > 0 && (
-          <button
-            type="button"
-            onClick={toggleSelectionMode}
-            style={{
-              ...btnBase,
-              background: selectionMode ? accentColor : '#e8e0d0',
-              color: selectionMode ? '#fff' : '#555',
-              padding: '8px 14px',
-              minHeight: 38,
-            }}
-          >
-            {selectionMode ? '完了' : '選択'}
-          </button>
-        )}
-      </div>
-
-      <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 16px 40px' }}>
+      <div style={stickyBarStyle}>
+        <div style={{ padding: '12px 16px 8px', maxWidth: 800, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Link to={`/room/${roomId}`} style={{ fontSize: 14, color: accentColor, textDecoration: 'none', minHeight: 44, display: 'flex', alignItems: 'center' }}>← 戻る</Link>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 'normal', color: accentColor, flex: 1 }}>写真一覧</h1>
+          <span style={{ fontSize: 12, color: '#888' }}>{posts.length}枚</span>
+          {posts.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleSelectionMode}
+              style={{
+                ...btnBase,
+                background: selectionMode ? accentColor : '#e8e0d0',
+                color: selectionMode ? '#fff' : '#555',
+                padding: '8px 14px',
+                minHeight: 38,
+              }}
+            >
+              {selectionMode ? '完了' : '選択'}
+            </button>
+          )}
+        </div>
         {selectionMode && posts.length > 0 && (
-          <>
+          <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 16px 12px' }}>
             <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
               選択中: {selected.size} / {MAX_SELECTION}
               {selectionMessage && <span style={{ marginLeft: 8, color: '#b85c00' }}>{selectionMessage}</span>}
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               <button type="button" style={secondaryBtn} onClick={() => { setSelected(new Set()); setSelectionMessage(''); }}>全解除</button>
               <button
                 type="button"
@@ -385,8 +394,11 @@ export default function PhotosPage() {
                 選択した写真を保存 ({selected.size})
               </button>
             </div>
-          </>
+          </div>
         )}
+      </div>
+
+      <div style={{ maxWidth: 800, margin: '0 auto', padding: '16px 16px 40px' }}>
         {progress && (
           <p style={{ marginBottom: 12, fontSize: 13, color: '#666' }}>
             保存中... {progress.current} / {progress.total}
@@ -394,7 +406,7 @@ export default function PhotosPage() {
         )}
         {posts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '60px 0', color: '#888', fontSize: 14 }}>
-            <p style={{ margin: 0 }}>まだアルバム用の写真はありません</p>
+            <p style={{ margin: 0 }}>まだ共有された写真はありません</p>
           </div>
         ) : (
           <div
