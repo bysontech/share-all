@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 import { getParticipantId } from '../utils/participantId';
@@ -111,6 +111,7 @@ export default function PhotosPage() {
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState('');
   const selfParticipantId = roomId ? getParticipantId(roomId) : null;
   const isDragSelectingRef = useRef(false);
   const dragStartIndexRef = useRef<number | null>(null);
@@ -119,7 +120,29 @@ export default function PhotosPage() {
   const downloadAbortRef = useRef<AbortController | null>(null);
   const nextOffsetRef = useRef(0);
   const loadingMoreRef = useRef(false);
+  const hasMoreRef = useRef(false);
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const loadMorePhotosRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    hasMoreRef.current = hasMore;
+  }, [hasMore]);
+
+  const LOAD_MORE_MARGIN_PX = 800;
+
+  const scheduleLoadMoreCheck = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!hasMoreRef.current || loadingMoreRef.current) return;
+        const el = loadMoreSentinelRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.top <= window.innerHeight + LOAD_MORE_MARGIN_PX) {
+          loadMorePhotosRef.current();
+        }
+      });
+    });
+  }, []);
 
   useEffect(() => {
     function stopDragSelect() {
@@ -155,6 +178,7 @@ export default function PhotosPage() {
     setPosts([]);
     setViewUrls({});
     setHasMore(false);
+    setLoadMoreError('');
     nextOffsetRef.current = 0;
     loadingMoreRef.current = false;
 
@@ -164,8 +188,11 @@ export default function PhotosPage() {
       if (cancelled) return;
 
       nextOffsetRef.current = res.posts.length;
-      setHasMore(res.posts.length === PAGE_SIZE);
+      const more = res.posts.length === PAGE_SIZE;
+      hasMoreRef.current = more;
+      setHasMore(more);
       setPosts(imagePosts);
+      setLoading(false);
 
       const urls = await fetchViewUrlsForPosts(imagePosts);
       if (!cancelled) setViewUrls(urls);
@@ -183,43 +210,69 @@ export default function PhotosPage() {
   }, [roomId, fetchViewUrlsForPosts]);
 
   const loadMorePhotos = useCallback(async () => {
-    if (!roomId || !hasMore || loadingMoreRef.current) return;
+    if (!roomId || !hasMoreRef.current || loadingMoreRef.current) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
+    setLoadMoreError('');
     try {
       const offset = nextOffsetRef.current;
       const res = await api.getPosts(roomId, undefined, 'album', undefined, PAGE_SIZE, offset);
       const imagePosts = res.posts.filter(p => p.file_type === 'image');
 
       nextOffsetRef.current += res.posts.length;
-      setHasMore(res.posts.length === PAGE_SIZE);
+      const more = res.posts.length === PAGE_SIZE;
+      hasMoreRef.current = more;
+      setHasMore(more);
       if (imagePosts.length > 0) {
         setPosts(prev => [...prev, ...imagePosts]);
         const urls = await fetchViewUrlsForPosts(imagePosts);
         setViewUrls(prev => ({ ...prev, ...urls }));
       }
     } catch {
-      setError('追加読み込みに失敗しました。');
+      setLoadMoreError('追加読み込みに失敗しました。もう一度お試しください。');
     } finally {
       loadingMoreRef.current = false;
       setLoadingMore(false);
+      scheduleLoadMoreCheck();
     }
-  }, [roomId, hasMore, fetchViewUrlsForPosts]);
+  }, [roomId, fetchViewUrlsForPosts, scheduleLoadMoreCheck]);
 
   useEffect(() => {
+    loadMorePhotosRef.current = () => {
+      void loadMorePhotos();
+    };
+  }, [loadMorePhotos]);
+
+  useLayoutEffect(() => {
     if (!hasMore) return;
     const el = loadMoreSentinelRef.current;
     if (!el) return;
 
+    const tryLoad = () => {
+      loadMorePhotosRef.current();
+    };
+
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some(entry => entry.isIntersecting)) {
-        loadMorePhotos();
-      }
-    }, { rootMargin: '400px 0px' });
+      if (entries.some(entry => entry.isIntersecting)) tryLoad();
+    }, { root: null, rootMargin: `${LOAD_MORE_MARGIN_PX}px 0px`, threshold: 0 });
 
     observer.observe(el);
-    return () => observer.disconnect();
-  }, [hasMore, posts.length, loadMorePhotos]);
+    scheduleLoadMoreCheck();
+
+    const onScroll = () => {
+      if (loadingMoreRef.current || !hasMoreRef.current) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.top <= window.innerHeight + LOAD_MORE_MARGIN_PX) tryLoad();
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [hasMore, posts.length, scheduleLoadMoreCheck]);
 
   const previewablePosts = posts.filter(p => viewUrls[p.id]);
   const previewIndex = previewPostId ? previewablePosts.findIndex(p => p.id === previewPostId) : -1;
@@ -558,13 +611,25 @@ export default function PhotosPage() {
           </div>
         )}
         {posts.length > 0 && (
-          <div ref={loadMoreSentinelRef} style={{ minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div ref={loadMoreSentinelRef} style={{ minHeight: 48, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0 24px' }}>
             {loadingMore ? (
               <span style={{ fontSize: 13, color: '#888' }}>追加読み込み中...</span>
             ) : hasMore ? (
-              <span style={{ fontSize: 12, color: '#aaa' }}>下へスクロールすると続きを読み込みます</span>
+              <>
+                <span style={{ fontSize: 12, color: '#aaa' }}>下へスクロールすると続きを読み込みます</span>
+                <button
+                  type="button"
+                  onClick={() => loadMorePhotosRef.current()}
+                  style={{ ...secondaryBtn, minHeight: 38, padding: '8px 14px' }}
+                >
+                  続きを読み込む
+                </button>
+              </>
             ) : (
               <span style={{ fontSize: 12, color: '#aaa' }}>すべて読み込みました</span>
+            )}
+            {loadMoreError && (
+              <span style={{ fontSize: 12, color: '#b85c00' }}>{loadMoreError}</span>
             )}
           </div>
         )}
