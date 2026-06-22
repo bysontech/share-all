@@ -191,9 +191,9 @@ theme.post('/upload-url', async (c) => {
   const now = nowSec();
 
   let uploadUrl: string;
-  if (r2SupportsPresignedPut(c.env.STORAGE)) {
+  if (r2SupportsPresignedPut(c.env)) {
     try {
-      uploadUrl = await generatePresignedPutUrl(c.env.STORAGE, fileKey, body.mimeType, expirySeconds);
+      uploadUrl = await generatePresignedPutUrl(c.env, fileKey, body.mimeType, expirySeconds);
     } catch (_e) {
       return err('Failed to generate upload URL', 500);
     }

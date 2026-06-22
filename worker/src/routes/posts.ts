@@ -58,9 +58,9 @@ posts.post('/upload-url', async (c) => {
     const fileKey = `${roomId}/display/${body.postId}.webp`;
     let uploadUrl: string;
 
-    if (r2SupportsPresignedPut(c.env.STORAGE)) {
+    if (r2SupportsPresignedPut(c.env)) {
       try {
-        uploadUrl = await generatePresignedPutUrl(c.env.STORAGE, fileKey, 'image/webp', expirySeconds);
+        uploadUrl = await generatePresignedPutUrl(c.env, fileKey, 'image/webp', expirySeconds);
       } catch (e) {
         console.error('Failed to generate presigned display upload URL', { roomId, postId: body.postId, error: e });
         return err('Failed to generate upload URL', 500);
@@ -89,9 +89,9 @@ posts.post('/upload-url', async (c) => {
     const fileKey = `${roomId}/thumbnails/${body.postId}.${ext}`;
     let uploadUrl: string;
 
-    if (r2SupportsPresignedPut(c.env.STORAGE)) {
+    if (r2SupportsPresignedPut(c.env)) {
       try {
-        uploadUrl = await generatePresignedPutUrl(c.env.STORAGE, fileKey, body.mimeType, expirySeconds);
+        uploadUrl = await generatePresignedPutUrl(c.env, fileKey, body.mimeType, expirySeconds);
       } catch (e) {
         console.error('Failed to generate presigned thumbnail upload URL', { roomId, postId: body.postId, error: e });
         return err('Failed to generate upload URL', 500);
@@ -157,9 +157,9 @@ posts.post('/upload-url', async (c) => {
     .run();
 
   let uploadUrl: string;
-  if (r2SupportsPresignedPut(c.env.STORAGE)) {
+  if (r2SupportsPresignedPut(c.env)) {
     try {
-      uploadUrl = await generatePresignedPutUrl(c.env.STORAGE, fileKey, body.mimeType, expirySeconds);
+      uploadUrl = await generatePresignedPutUrl(c.env, fileKey, body.mimeType, expirySeconds);
     } catch (e) {
       console.error('Failed to generate presigned upload URL', {
         roomId, postId, fileKey, mimeType: body.mimeType, expirySeconds, error: e,
