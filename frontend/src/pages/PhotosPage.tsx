@@ -219,7 +219,7 @@ export default function PhotosPage() {
 
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasMore, loadMorePhotos]);
+  }, [hasMore, posts.length, loadMorePhotos]);
 
   const previewablePosts = posts.filter(p => viewUrls[p.id]);
   const previewIndex = previewPostId ? previewablePosts.findIndex(p => p.id === previewPostId) : -1;

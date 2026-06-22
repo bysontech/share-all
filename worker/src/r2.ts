@@ -25,7 +25,7 @@ function hasS3PresignConfig(config: R2PresignConfig): boolean {
 }
 
 export function r2SupportsPresignedPut(target: R2Bucket | R2PresignConfig): boolean {
-  if ('R2_ACCOUNT_ID' in target) return hasS3PresignConfig(target);
+  if (hasS3PresignConfig(target as R2PresignConfig)) return true;
   return typeof (target as R2WithPresign).createPresignedUrl === 'function';
 }
 
@@ -137,8 +137,9 @@ export async function generatePresignedPutUrl(
   mimeType: string,
   expirySeconds: number
 ): Promise<string> {
-  if ('R2_ACCOUNT_ID' in target) {
-    return generateS3PresignedPutUrl(target, fileKey, expirySeconds);
+  const config = target as R2PresignConfig;
+  if (hasS3PresignConfig(config)) {
+    return generateS3PresignedPutUrl(config, fileKey, expirySeconds);
   }
 
   const b = target as R2WithPresign;
