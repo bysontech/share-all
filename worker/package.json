@@ -13,6 +13,7 @@
     "migrate:remote:0006": "wrangler d1 execute share-photo-db --remote --file=migrations/0006_post_purpose.sql"
   },
   "dependencies": {
+    "aws4fetch": "^1.0.20",
     "hono": "^4.6.0"
   },
   "devDependencies": {

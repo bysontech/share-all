@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { api, putToR2 } from '../api/client';
+import { api, putToR2, ApiError } from '../api/client';
 import type { Post } from '../api/client';
 
 export type UploadItemStatus = 'pending' | 'uploading' | 'completing' | 'done' | 'error';
@@ -258,7 +258,11 @@ export function useUploadQueue({ roomId, nickname, participantId, postPurpose, o
           post_purpose: postPurpose ?? 'album',
         });
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'アップロードに失敗しました';
+        const msg = e instanceof ApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : 'アップロードに失敗しました';
         updateItem(id, { status: 'error', error: msg });
         if (postId) {
           await api.failUpload(roomId, postId).catch(() => {});

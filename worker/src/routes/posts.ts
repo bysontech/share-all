@@ -4,7 +4,12 @@ import { ALLOWED_IMAGE_MIMES, ALLOWED_VIDEO_MIMES, MAX_IMAGE_SIZE, MAX_VIDEO_SIZ
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
 import { getRoomAndValidate, getPost } from '../db';
 import { authorizeRoomManage } from '../roomManageAuth';
-import { generatePresignedPutUrl, generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
+import {
+  generatePresignedPutUrl,
+  generatePresignedGetUrl,
+  envSupportsPresignedPut,
+  requiresDirectR2Upload,
+} from '../r2';
 import { buildCdnCgiImageUrl } from '../image-transformations';
 import { resolveEventMode } from '../eventMode';
 import {
@@ -58,7 +63,7 @@ posts.post('/upload-url', async (c) => {
     const fileKey = `${roomId}/display/${body.postId}.webp`;
     let uploadUrl: string;
 
-    if (r2SupportsPresignedPut(c.env)) {
+    if (envSupportsPresignedPut(c.env)) {
       try {
         uploadUrl = await generatePresignedPutUrl(c.env, fileKey, 'image/webp', expirySeconds);
       } catch (e) {
@@ -89,7 +94,7 @@ posts.post('/upload-url', async (c) => {
     const fileKey = `${roomId}/thumbnails/${body.postId}.${ext}`;
     let uploadUrl: string;
 
-    if (r2SupportsPresignedPut(c.env)) {
+    if (envSupportsPresignedPut(c.env)) {
       try {
         uploadUrl = await generatePresignedPutUrl(c.env, fileKey, body.mimeType, expirySeconds);
       } catch (e) {
@@ -116,6 +121,13 @@ posts.post('/upload-url', async (c) => {
 
   const maxSize = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
   if (body.fileSize > maxSize) return err(`File too large (max ${maxSize / 1024 / 1024}MB)`);
+
+  if (requiresDirectR2Upload(body.fileSize, isVideo) && !envSupportsPresignedPut(c.env)) {
+    return err(
+      '動画・大容量ファイルのアップロードには R2 直接アップロード設定が必要です。Worker に R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY を secret として設定してください。',
+      503
+    );
+  }
 
   const fileType = isVideo ? 'video' : 'image';
 
@@ -157,7 +169,7 @@ posts.post('/upload-url', async (c) => {
     .run();
 
   let uploadUrl: string;
-  if (r2SupportsPresignedPut(c.env)) {
+  if (envSupportsPresignedPut(c.env)) {
     try {
       uploadUrl = await generatePresignedPutUrl(c.env, fileKey, body.mimeType, expirySeconds);
     } catch (e) {
@@ -448,7 +460,7 @@ posts.post('/view-urls', async (c) => {
     body.purpose ?? (body.preferDisplay ? 'display' : null);
 
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
-  const usePresigned = r2SupportsPresignedPut(c.env.STORAGE);
+  const usePresigned = envSupportsPresignedPut(c.env);
   const proxySecret = c.env.UPLOAD_BODY_SIGNING_SECRET;
 
   if (!usePresigned && !proxySecret) {

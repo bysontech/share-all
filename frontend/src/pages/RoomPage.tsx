@@ -5,7 +5,7 @@ import { useUploadQueue } from '../hooks/useUploadQueue';
 import { getOrCreateParticipantId } from '../utils/participantId';
 
 const SLIDESHOW_MAX = 10;
-const VIDEO_SELECTION_MAX_BYTES = 500 * 1024 * 1024;
+const VIDEO_SELECTION_MAX_BYTES = 900 * 1024 * 1024;
 
 function useBootstrap(roomId: string | undefined) {
   const [room, setRoom] = useState<RoomInfo | null>(null);

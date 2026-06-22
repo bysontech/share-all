@@ -3,7 +3,7 @@ import type { Env } from '../types';
 import { uuid, nowSec, err, ROOM_EXPIRES_AT_PLACEHOLDER_SEC } from '../utils';
 import { getRoomAndValidate } from '../db';
 import { authorizeRoomManage } from '../roomManageAuth';
-import { generatePresignedGetUrl, r2SupportsPresignedPut } from '../r2';
+import { generatePresignedGetUrl, envSupportsPresignedPut } from '../r2';
 import { createViewFileToken } from '../uploadBodyToken';
 import { buildCdnCgiImageUrl } from '../image-transformations';
 import { resolveEventMode, computeNextTransitionAt } from '../eventMode';
@@ -70,7 +70,7 @@ rooms.get('/:roomId/bootstrap', async (c) => {
   ).bind(roomId).first<ThemeRow>();
 
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
-  const usePresigned = r2SupportsPresignedPut(c.env.STORAGE);
+  const usePresigned = envSupportsPresignedPut(c.env);
   const proxySecret = c.env.UPLOAD_BODY_SIGNING_SECRET;
   const now = nowSec();
   const exp = now + expirySeconds;
