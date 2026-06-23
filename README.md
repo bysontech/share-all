@@ -1,189 +1,151 @@
-# Template C: B->C 昇格ルート設計書
+# Share Photo
 
-## 1. Purpose / Positioning
+結婚式・イベント向けの写真/動画共有アプリ。参加者はルームURLから入室し、ニックネームを登録してスライドショー用写真・アルバム用写真・動画を投稿する。会場のモニターでは投稿がリアルタイムにスライドショー表示される。
 
-このリポジトリは **設計書リポ** であり、実装コードは含まない。
+- フロントエンド: React + Vite SPA（Cloudflare Pages）
+- API: Cloudflare Workers（Hono）
+- DB: Cloudflare D1（SQLite）
+- ストレージ: Cloudflare R2（署名付きURLで直接 PUT / GET）
+- HEIC表示: Cloudflare Image Transformations（`/cdn-cgi/image/...`）
 
-**テンプレCの位置づけ:**
-- テンプレCは"常用しない"
-- テンプレB（クライアント完結PWA）が成長し、サーバー機能が必要になったときの「昇格先の型」を文書で固定する
-- 技術選定はここでは確定しない。あくまで「設計の型」と「移行手順」を定義する
-
-**テンプレの階層:**
 ```
-Template A: 静的サイト（HTML/CSS のみ）
-Template B: クライアント完結 PWA（IndexedDB/Dexie、認証なし）
-Template C: サーバー連携アプリ（API + DB + 認証）← このリポが対象
-```
-
----
-
-## 2. When to promote (B -> C)
-
-昇格は **必要になるまで行わない**。以下のいずれかが発生したときのみ検討する。
-
-### 昇格トリガー
-| トリガー | 具体例 |
-|---------|--------|
-| データ共有 | 複数端末・複数ユーザーで同じデータを参照したい |
-| サーバー処理 | 課金、外部API連携、重いバッチ処理 |
-| 認証・権限 | ログインが必要、ユーザーごとに見える範囲を制限したい |
-| データ永続性 | ブラウザストレージでは消失リスクが高い |
-
-### 昇格しない例
-- 「いつかマルチユーザーにするかも」→ Bのまま
-- 「バックアップが欲しい」→ エクスポート機能で対応
-- 「PWAが遅い」→ まずB側で最適化
-
-詳細: [docs/promotion_criteria.md](docs/promotion_criteria.md)
-
----
-
-## 3. Fixed replacement points
-
-差し替えポイントは **2つだけ** に限定する。これ以上増やさない。
-
-### 1) データ層
-| B (現状) | C (昇格後) |
-|----------|------------|
-| IndexedDB / Dexie | API + サーバーDB |
-| ローカル完結 | リモート同期 |
-
-### 2) 認証
-| B (現状) | C (昇格後) |
-|----------|------------|
-| なし / ローカル識別子 | ログイン + セッション管理 |
-| 権限チェックなし | ロールベース権限 |
-
-**UI層は変えない** — Repository interface を通じてデータ層を差し替えることで、画面コンポーネントはそのまま維持する。
-
----
-
-## 4. B-side design rules
-
-テンプレBで **最初から** 守るべき設計ルール。これにより、将来Cへの移行がスムーズになる。
-
-### 必須: Repository interface
-```typescript
-// B側で最初から定義しておく
-interface TaskRepository {
-  getAll(): Promise<Task[]>;
-  getById(id: string): Promise<Task | null>;
-  create(task: CreateTaskInput): Promise<Task>;
-  update(id: string, task: UpdateTaskInput): Promise<Task>;
-  delete(id: string): Promise<void>;
-}
-```
-- UIコンポーネントはこのインターフェース経由でデータにアクセスする
-- 実装は `LocalTaskRepository`（Dexie）から始め、昇格時に `ApiTaskRepository` に差し替える
-
-### 必須: Auth injection point
-```typescript
-// B側では空実装でOK
-interface AuthContext {
-  userId: string | null;
-  isAuthenticated: boolean;
-  permissions: string[];
-}
-
-// 画面側は AuthContext を受け取る形で書く
-function TaskList({ auth }: { auth: AuthContext }) { ... }
+参加者・管理者（ブラウザ）
+        │
+        ├─ HTTPS ─→ Cloudflare Pages（React / Vite SPA）
+        │                 │ fetch / REST API
+        │                 ↓
+        │         Cloudflare Workers（Hono）
+        │           ├─ D1（メタデータ）
+        │           └─ R2（署名付きURL発行）
+        └─ 署名付きURL ─→ Cloudflare R2（直接 PUT / GET）
 ```
 
-### 必須: Data mapping layer
-- ローカルスキーマとリモートスキーマの変換レイヤーを想定しておく
-- IDの形式（UUID vs 連番）、日付の形式などを変換できる余地を残す
+---
 
-詳細: [docs/repository_contract.md](docs/repository_contract.md), [docs/auth_contract.md](docs/auth_contract.md)
+## 主な機能
+
+- **ルーム単位の参加者投稿**: ニックネーム登録、スライドショー用写真 / 共有アルバム用写真 / 動画の3種類の投稿（`post_purpose`）。
+- **スライドショー表示**: 会場モニター向けのフルスクリーン表示。直近30分以内の投稿（Fresh Pool）を既存投稿（Archive Pool）より優先しつつ（約70:30）、同一写真・同一参加者の連続表示を抑制して混在表示する。
+- **公開モード制御（draft / event_live / archive）**: 手動切替 + 時刻スケジュールでルームの状態（準備中・披露宴中・終了後）を制御し、Worker側でもアップロード可否を強制する。
+- **テーマ設定**: タイトル・メッセージ・メインビジュアル・背景画像・テーマカラー・アニメーションを管理画面から設定可能。
+- **管理画面**: ルーム作成/削除、投稿の表示/非表示・削除、スライドショー設定、テーマ設定。サイト管理者ログイン（Cookieベース）。
+- **固定公開URL（QR運用）**: `/wedding/:token` → 参加者画面、`/wedding/live/:token` → スライドショーへリダイレクト。
+- **HEIC対応**: original はR2に保存し、表示はCloudflare Image TransformationsのURLを返す（Images Storageは使わない）。
 
 ---
 
-## 5. C-side responsibilities
+## ディレクトリ構成
 
-Cへ昇格すると、以下の責務が追加される。B側には存在しない。
-
-| 責務 | 説明 |
-|------|------|
-| API設計 | REST or GraphQL。エンドポイント設計、エラーハンドリング |
-| DB設計 | スキーマ、マイグレーション、インデックス |
-| 認証・認可 | ログイン、セッション、権限チェック |
-| Webhook/外部連携 | 課金システム、通知サービスとの連携 |
-| 運用 | ログ、監視、バックアップ、スケーリング |
-
-**注意:** これらはB側では実装しない。昇格が決まってから設計する。
-
----
-
-## 6. Candidate stack (not fixed)
-
-技術選定はこのリポでは **確定しない**。プロジェクトごとに選択する。
-
-### API + DB 候補
-| 候補 | 特徴 | 適したケース |
-|------|------|-------------|
-| Cloudflare Workers + D1 | 低コスト、エッジ | 軽量API、グローバル配信 |
-| Supabase | PostgreSQL + Auth 統合 | 中規模、リアルタイム同期 |
-| Firebase | NoSQL、モバイル親和性 | モバイル中心、素早い立ち上げ |
-| 自前 (Node + PostgreSQL) | 柔軟性 | 大規模、特殊要件 |
-
-### 認証候補
-| 候補 | 特徴 |
-|------|------|
-| Supabase Auth | DB一体型 |
-| Firebase Auth | ソーシャルログイン容易 |
-| Auth0 / Clerk | エンタープライズ向け |
-| 自前 (Lucia等) | 完全制御 |
-
-**選定の記録は** [docs/decision_log.md](docs/decision_log.md) に残す。
-
----
-
-## 7. Promotion checklist
-
-B->C 昇格時のチェックリスト。
-
-### 事前確認
-- [ ] 本当に昇格が必要か？（トリガーを再確認）
-- [ ] B側で Repository interface が実装済みか？
-- [ ] B側で Auth injection point が準備済みか？
-
-### 移行作業
-- [ ] 技術スタックを選定し、decision_log.md に記録
-- [ ] DBスキーマを設計
-- [ ] APIエンドポイントを実装
-- [ ] `ApiTaskRepository` を実装
-- [ ] 認証を実装
-- [ ] ローカルデータの移行スクリプトを作成（必要なら）
-- [ ] E2Eテストを追加
-
-### 完了確認
-- [ ] UIが変わらず動作する
-- [ ] 認証フローが動作する
-- [ ] データの読み書きがサーバー経由で動作する
-
-詳細: [docs/migration_b_to_c.md](docs/migration_b_to_c.md)
-
----
-
-## 8. How to use this repo
-
-このリポの使い方:
-
-1. **昇格を検討するとき**: このREADMEと `docs/promotion_criteria.md` を読み、本当に必要か判断
-2. **B側を設計するとき**: `docs/repository_contract.md`, `docs/auth_contract.md` を参照し、昇格可能な設計を維持
-3. **昇格を実行するとき**: `docs/migration_b_to_c.md` の手順に従う
-4. **技術選定したとき**: `docs/decision_log.md` に記録を残す
-
-### ファイル構成
 ```
-README.md                     # このファイル（全体概要）
-docs/
-  promotion_criteria.md       # 昇格基準の詳細
-  migration_b_to_c.md         # B->C移行手順
-  repository_contract.md      # Repository interface設計指針
-  auth_contract.md            # 認証の設計指針
-  decision_log.md             # 技術選定の記録
+frontend/             React + Vite SPA
+  src/pages/             各画面（RoomPage, SlideshowPage, PhotosPage, VideosPage, AdminPage 等）
+  src/hooks/             usePostsPolling, useUploadQueue 等
+  src/api/client.ts      APIクライアント
+  src/utils/             participantId, slideshowPool（Fresh/Archive抽選ロジック）等
+worker/                Cloudflare Worker（Hono）
+  src/routes/            rooms / posts / theme / admin / internal / wedding
+  src/                   D1ヘルパー、認可、R2署名、Image Transformations 等
+  migrations/            D1スキーマ変更（順番付きSQL）
+docs/                  設計・運用ドキュメント（後述）
+playbook/              開発サイクルごとの計画・実装タスク
+scripts/               運用補助スクリプト
 ```
+
+---
+
+## セットアップ
+
+### 前提
+
+- Node.js（frontend/worker とも `package.json` 参照）
+- Cloudflare アカウント（D1 / R2 / Workers / Pages）
+- `wrangler` CLI（`worker/` の devDependencies に含む）
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev        # 開発サーバー（vite.config.ts の proxy で /api をWorkerへ転送）
+npm run typecheck
+npm run build
+```
+
+本番ビルドでAPIが別オリジンの場合は `VITE_API_BASE` を設定する。
+
+```bash
+VITE_API_BASE=https://share-photo-api.bysontech.jp npm run build
+```
+
+### Worker
+
+```bash
+cd worker
+npm install
+cp .dev.vars.example .dev.vars   # R2 S3 API credentials等をローカル用に設定
+npm run dev         # wrangler dev
+npm run typecheck
+npm run build        # typecheck + wrangler deploy --dry-run
+npm run deploy
+```
+
+D1マイグレーションはローカル/本番それぞれ `wrangler d1 execute` で適用する。
+
+```bash
+npm run migrate:local        # 0001〜0005 をまとめて適用
+npm run migrate:local:0006   # 0006以降は個別に追加されている
+```
+
+新しいマイグレーションファイルを追加した場合は、ローカル・本番の双方に忘れず適用すること（未適用だと該当カラム不足でAPIエラーになる）。
+
+### 主な環境変数 / Secret（`worker/wrangler.toml` の `[vars]` および Cloudflare Secret）
+
+| 変数 | 用途 |
+|---|---|
+| `FRONTEND_URL` | フロントの公開オリジン（CORS許可・リダイレクト先） |
+| `SIGNED_URL_EXPIRY_UPLOAD` / `SIGNED_URL_EXPIRY_VIEW` | R2署名URLの有効期限 |
+| `UPLOAD_BODY_SIGNING_SECRET` | Worker経由アップロード/閲覧トークンのHMAC secret |
+| `IMAGE_TRANSFORMATIONS_ORIGIN` | HEIC表示に使う `/cdn-cgi/image` 有効オリジン |
+| `PUBLIC_WEDDING_ROOM_ID` | `/wedding/*` 固定公開URLの対象ルームID |
+| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 S3 API（presigned URL生成用、Secretで管理） |
+| `ADMIN_PASSWORD_HASH` / `ADMIN_SESSION_SECRET` | サイト管理者ログイン |
+| `ADMIN_ENTRY_TOKEN_HASH` / `ADMIN_ENTRY_SESSION_SECRET` | `/internal/:token` 管理入口 |
+| `PUBLIC_WEDDING_ENTRY_TOKEN_HASH` / `PUBLIC_WEDDING_LIVE_TOKEN_HASH` | `/wedding/*` 固定公開URLのトークン |
+
+詳細は `docs/system-overview-frontend-worker.md` と `docs/wedding-url-setup.md` を参照。
+
+---
+
+## デプロイ
+
+- Worker: `cd worker && npm run deploy`（Cloudflare Workers）
+- Frontend: Cloudflare Pages にビルド出力（`frontend/dist`）を配信。`VITE_API_BASE` をビルド時環境変数として設定する。
+
+---
+
+## ドキュメント
+
+| ドキュメント | 内容 |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | 基本設計書（システム構成、D1スキーマ、API設計） |
+| [docs/system-overview-frontend-worker.md](docs/system-overview-frontend-worker.md) | フロント/Workerの実装全体像（ルーティング、API、認可、ハマりどころ） |
+| [docs/wedding-url-setup.md](docs/wedding-url-setup.md) | 固定公開URL（QR運用）のトークン設定手順 |
+| [playbook/cycle-plan/](playbook/cycle-plan) | 開発サイクルごとのテーマ・スコープ |
+| [playbook/implementation-tasks/](playbook/implementation-tasks) | 開発サイクルごとの実装タスク詳細 |
+
+`docs/promotion_criteria.md`、`docs/migration_b_to_c.md`、`docs/repository_contract.md`、`docs/auth_contract.md`、`docs/decision_log.md` は別系統（テンプレB→C昇格設計）の参考ドキュメントであり、本アプリの実装とは直接関係しない。
+
+---
+
+## 注意点・よくあるハマりどころ
+
+- D1マイグレーション未適用（特に `post_purpose` や `event_mode` 系カラム）だとAPIがSQLエラーになる。
+- `upload_status` の完了値は `uploaded`（`completed` ではない）。
+- R2オブジェクトは常にprivate。フロントは署名付きURL経由でのみ画像/動画にアクセスする。
+- HEIC表示には `IMAGE_TRANSFORMATIONS_ORIGIN` が必要。ローカルの `wrangler dev`（localhost）単体では `/cdn-cgi/image` は機能しない。
+- admin Cookieを送るため、CORSは `credentials: true`、フロントの fetch も `credentials: 'include'` が必要。
+
+詳細は `docs/system-overview-frontend-worker.md` の「注意点・よくあるハマりどころ」を参照。
 
 ---
 
