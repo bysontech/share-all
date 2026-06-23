@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
+import { isShareSupported, shareMedia } from '../utils/share';
 
 function mimeToExt(mime: string): string {
   const map: Record<string, string> = {
@@ -23,9 +24,10 @@ interface VideoModalProps {
   saving: boolean;
   onClose: () => void;
   onDownload: () => void;
+  onShare: () => void;
 }
 
-function VideoModal({ post, videoUrl, saving, onClose, onDownload }: VideoModalProps) {
+function VideoModal({ post, videoUrl, saving, onClose, onDownload, onShare }: VideoModalProps) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -39,25 +41,36 @@ function VideoModal({ post, videoUrl, saving, onClose, onDownload }: VideoModalP
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', flexShrink: 0 }}>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 22, cursor: 'pointer', padding: '6px 10px', lineHeight: 1 }}>✕</button>
         <span style={{ fontSize: 13, color: '#ccc' }}>{post.nickname}</span>
-        <button
-          type="button"
-          onClick={onDownload}
-          disabled={saving}
-          style={{
-            background: '#b8860b',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 6,
-            padding: '8px 18px',
-            fontSize: 13,
-            cursor: saving ? 'wait' : 'pointer',
-            fontWeight: 'bold',
-            minHeight: 40,
-            opacity: saving ? 0.7 : 1,
-          }}
-        >
-          {saving ? '保存中...' : '保存'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {isShareSupported() && (
+            <button
+              type="button"
+              onClick={onShare}
+              style={{ background: '#444', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 14px', fontSize: 13, cursor: 'pointer', fontWeight: 'bold', minHeight: 40 }}
+            >
+              共有
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onDownload}
+            disabled={saving}
+            style={{
+              background: '#b8860b',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              padding: '8px 18px',
+              fontSize: 13,
+              cursor: saving ? 'wait' : 'pointer',
+              fontWeight: 'bold',
+              minHeight: 40,
+              opacity: saving ? 0.7 : 1,
+            }}
+          >
+            {saving ? '保存中...' : '保存'}
+          </button>
+        </div>
       </div>
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: '0 8px' }}>
         <video
@@ -71,6 +84,9 @@ function VideoModal({ post, videoUrl, saving, onClose, onDownload }: VideoModalP
       <div style={{ padding: '10px 16px', background: 'rgba(0,0,0,0.6)', color: '#ccc', fontSize: 13, flexShrink: 0 }}>
         {post.nickname}
         <span style={{ marginLeft: 10, fontSize: 11, color: '#777' }}>{new Date(post.created_at * 1000).toLocaleString('ja-JP')}</span>
+        <div style={{ marginTop: 8, fontSize: 12, color: '#aaa' }}>
+          動画は端末によってファイル保存になる場合があります
+        </div>
       </div>
     </div>
   );
@@ -134,6 +150,23 @@ export default function VideosPage() {
     }
   }
 
+  async function handleShare(post: Post) {
+    if (!roomId) return;
+    try {
+      let url = videoUrls[post.id];
+      if (!url) {
+        const res = await api.getViewUrls(roomId, [post.id]);
+        url = res.viewUrls[post.id];
+        if (url) setVideoUrls(prev => ({ ...prev, [post.id]: url! }));
+      }
+      if (!url) return;
+      const shared = await shareMedia(resolvePublicMediaUrl(url), buildDownloadFilename(post), post.mime_type);
+      if (!shared) await handleDownload(post);
+    } catch {
+      // non-fatal
+    }
+  }
+
   async function handlePlay(post: Post) {
     if (videoUrls[post.id]) {
       setPlayingPost(post);
@@ -180,6 +213,7 @@ export default function VideosPage() {
           saving={saving}
           onClose={() => setPlayingPost(null)}
           onDownload={() => handleDownload(playingPost)}
+          onShare={() => handleShare(playingPost)}
         />
       )}
 

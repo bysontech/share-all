@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 import { getParticipantId } from '../utils/participantId';
+import { isMobileDevice } from '../utils/device';
+import { downloadAsZip, ZIP_THRESHOLD, ZIP_MAX_COUNT, type ZipPhase, type ZipTarget } from '../utils/zipDownload';
+import { isShareSupported, shareMedia } from '../utils/share';
 
 const SAVED_KEY = (roomId: string) => `room:${roomId}:savedPostIds`;
 
@@ -75,13 +78,15 @@ interface PreviewModalProps {
   index: number;
   total: number;
   isSaved: boolean;
+  isMobile: boolean;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
   onSave: () => void;
+  onShare: () => void;
 }
 
-function PreviewModal({ post, url, index, total, isSaved, onClose, onPrev, onNext, onSave }: PreviewModalProps) {
+function PreviewModal({ post, url, index, total, isSaved, isMobile, onClose, onPrev, onNext, onSave, onShare }: PreviewModalProps) {
   const accentColor = '#b8860b';
 
   // Close on Escape key
@@ -171,6 +176,20 @@ function PreviewModal({ post, url, index, total, isSaved, onClose, onPrev, onNex
         <span style={{ marginLeft: 10, fontSize: 11, color: '#777' }}>
           {new Date(post.created_at * 1000).toLocaleString('ja-JP')}
         </span>
+        {isMobile && (
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: '#aaa' }}>写真を開いて共有または保存してください</span>
+            {isShareSupported() && (
+              <button
+                type="button"
+                onClick={onShare}
+                style={{ background: '#444', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer', minHeight: 32 }}
+              >
+                共有
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -196,9 +215,11 @@ export default function GalleryPage() {
   const [previewPostId, setPreviewPostId] = useState<string | null>(null);
 
   const selfParticipantId = roomId ? getParticipantId(roomId) : null;
+  const isMobile = isMobileDevice();
 
-  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ current: number; total: number; phase?: ZipPhase } | null>(null);
   const [dlResult, setDlResult] = useState<DlResult | null>(null);
+  const [saveError, setSaveError] = useState('');
 
   const savedRef = useRef(saved);
   savedRef.current = saved;
@@ -289,48 +310,90 @@ export default function GalleryPage() {
 
   const downloadPosts = useCallback(async (targets: Post[]) => {
     if (targets.length === 0) return;
+
+    const photoTargets = targets.filter(p => p.file_type === 'image');
+    const videoTargets = targets.filter(p => p.file_type !== 'image');
+
+    if (photoTargets.length > ZIP_MAX_COUNT) {
+      setSaveError(`一度に保存できる写真は${ZIP_MAX_COUNT}枚までです。`);
+      return;
+    }
+    setSaveError('');
     setDlResult(null);
-    setProgress({ current: 0, total: targets.length });
 
-    const urls = await fetchDownloadUrls(targets);
+    const useZip = !isMobileDevice() && photoTargets.length >= ZIP_THRESHOLD;
+    const individualTargets = useZip ? videoTargets : targets;
 
-    const newSaved = new Set(savedRef.current);
-    let done = 0;
-    let failCount = 0;
+    let zipSucceeded = 0;
+    let zipFailed = 0;
 
-    for (const [index, post] of targets.entries()) {
-      const url = urls[post.id];
-      if (!url) {
-        failCount++;
-        done++;
-        setProgress({ current: done, total: targets.length });
-        continue;
+    if (useZip) {
+      setProgress({ current: 0, total: photoTargets.length, phase: 'fetching' });
+      const urls = await fetchDownloadUrls(photoTargets);
+      const zipTargets: ZipTarget[] = [];
+      photoTargets.forEach((post, i) => {
+        const url = urls[post.id];
+        if (url) zipTargets.push({ url: resolvePublicMediaUrl(url), filename: buildDownloadFilename(post, i + 1) });
+      });
+      zipFailed = photoTargets.length - zipTargets.length;
+      if (zipTargets.length > 0) {
+        const result = await downloadAsZip(zipTargets, 'photo-download.zip', (p) => {
+          setProgress({ current: p.current, total: p.total, phase: p.phase });
+        });
+        zipSucceeded = result.succeeded;
+        zipFailed += result.failed;
+        const newSaved = new Set(savedRef.current);
+        photoTargets.forEach(post => { if (urls[post.id]) newSaved.add(post.id); });
+        setSaved(newSaved);
+        if (roomId) persistSaved(roomId, newSaved);
       }
-      try {
-        const res = await fetch(resolvePublicMediaUrl(url));
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        const filename = buildDownloadFilename(post, index + 1);
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
-        newSaved.add(post.id);
-      } catch {
-        failCount++;
-      }
-      done++;
-      setProgress({ current: done, total: targets.length });
+      setProgress(null);
     }
 
-    setSaved(newSaved);
-    if (roomId) persistSaved(roomId, newSaved);
-    setProgress(null);
-    setDlResult({ succeeded: targets.length - failCount, failed: failCount });
-    setTimeout(() => setDlResult(null), 5000);
+    if (individualTargets.length > 0) {
+      setProgress({ current: 0, total: individualTargets.length });
+      const urls = await fetchDownloadUrls(individualTargets);
+      const newSaved = new Set(savedRef.current);
+      let done = 0;
+      let failCount = 0;
+
+      for (const [index, post] of individualTargets.entries()) {
+        const url = urls[post.id];
+        if (!url) {
+          failCount++;
+          done++;
+          setProgress({ current: done, total: individualTargets.length });
+          continue;
+        }
+        try {
+          const res = await fetch(resolvePublicMediaUrl(url));
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          const filename = buildDownloadFilename(post, index + 1);
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(a.href);
+          newSaved.add(post.id);
+        } catch {
+          failCount++;
+        }
+        done++;
+        setProgress({ current: done, total: individualTargets.length });
+      }
+
+      setSaved(newSaved);
+      if (roomId) persistSaved(roomId, newSaved);
+      setProgress(null);
+      setDlResult({ succeeded: zipSucceeded + (individualTargets.length - failCount), failed: zipFailed + failCount });
+      setTimeout(() => setDlResult(null), 5000);
+    } else if (useZip) {
+      setDlResult({ succeeded: zipSucceeded, failed: zipFailed });
+      setTimeout(() => setDlResult(null), 5000);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
@@ -342,6 +405,14 @@ export default function GalleryPage() {
   }
   function handleDownloadUnsaved() {
     downloadPosts(filteredPosts.filter(p => !saved.has(p.id)));
+  }
+
+  async function handleShare(post: Post, sequence: number) {
+    const urls = await fetchDownloadUrls([post]);
+    const url = urls[post.id];
+    if (!url) return;
+    const shared = await shareMedia(resolvePublicMediaUrl(url), buildDownloadFilename(post, sequence), post.mime_type);
+    if (!shared) await downloadPosts([post]);
   }
 
   function handleTileClick(post: Post) {
@@ -431,10 +502,12 @@ export default function GalleryPage() {
           index={previewIndex}
           total={previewablePosts.length}
           isSaved={saved.has(previewPost.id)}
+          isMobile={isMobile}
           onClose={() => setPreviewPostId(null)}
           onPrev={previewPrev}
           onNext={previewNext}
           onSave={() => downloadPosts([previewPost])}
+          onShare={() => handleShare(previewPost, previewIndex + 1)}
         />
       )}
 
@@ -457,7 +530,7 @@ export default function GalleryPage() {
           アルバム
         </h1>
         <span style={{ fontSize: 12, color: '#888', flexShrink: 0 }}>{posts.length}件</span>
-        {posts.length > 0 && (
+        {posts.length > 0 && !isMobile && (
           <button
             onClick={toggleSelectionMode}
             style={{
@@ -504,7 +577,7 @@ export default function GalleryPage() {
         )}
 
         {/* Selection mode toolbar */}
-        {posts.length > 0 && selectionMode && (
+        {posts.length > 0 && selectionMode && !isMobile && (
           <>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
               <button style={secondaryBtn} onClick={selectAll}>全選択</button>
@@ -546,10 +619,20 @@ export default function GalleryPage() {
           </>
         )}
 
+        {/* Save limit error */}
+        {saveError && (
+          <div style={{ marginBottom: 12, padding: '10px 14px', background: '#f8d7da', color: '#721c24', borderRadius: 6, fontSize: 13 }}>
+            {saveError}
+          </div>
+        )}
+
         {/* Progress */}
         {progress && (
           <div style={{ marginBottom: 12, padding: '10px 14px', background: '#fff3cd', borderRadius: 6, fontSize: 13 }}>
-            保存中... {progress.current} / {progress.total}
+            {progress.phase === 'fetching' ? `写真を取得中... ${progress.current} / ${progress.total}`
+              : progress.phase === 'zipping' ? 'ZIPを作成中...'
+              : progress.phase === 'done' ? '完了しました'
+              : `保存中... ${progress.current} / ${progress.total}`}
           </div>
         )}
 

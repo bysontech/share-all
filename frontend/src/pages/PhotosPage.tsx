@@ -2,8 +2,11 @@ import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react
 import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 import { getParticipantId } from '../utils/participantId';
+import { isMobileDevice } from '../utils/device';
+import { downloadAsZip, ZIP_THRESHOLD, ZIP_MAX_COUNT, type ZipPhase, type ZipTarget } from '../utils/zipDownload';
+import { isShareSupported, shareMedia } from '../utils/share';
 
-const MAX_SELECTION = 100;
+const MAX_SELECTION = ZIP_MAX_COUNT;
 const PAGE_SIZE = 100;
 const SAVED_KEY = (roomId: string) => `room:${roomId}:savedPostIds`;
 
@@ -52,13 +55,15 @@ interface PreviewModalProps {
   url: string;
   index: number;
   total: number;
+  isMobile: boolean;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
   onDownload: () => void;
+  onShare: () => void;
 }
 
-function PreviewModal({ post, url, index, total, onClose, onPrev, onNext, onDownload }: PreviewModalProps) {
+function PreviewModal({ post, url, index, total, isMobile, onClose, onPrev, onNext, onDownload, onShare }: PreviewModalProps) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -89,6 +94,20 @@ function PreviewModal({ post, url, index, total, onClose, onPrev, onNext, onDown
       <div style={{ padding: '10px 16px', background: 'rgba(0,0,0,0.6)', color: '#ccc', fontSize: 13, flexShrink: 0 }}>
         {post.nickname}
         <span style={{ marginLeft: 10, fontSize: 11, color: '#777' }}>{new Date(post.created_at * 1000).toLocaleString('ja-JP')}</span>
+        {isMobile && (
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: '#aaa' }}>写真を開いて共有または保存してください</span>
+            {isShareSupported() && (
+              <button
+                type="button"
+                onClick={onShare}
+                style={{ background: '#444', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer', minHeight: 32 }}
+              >
+                共有
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -108,10 +127,11 @@ export default function PhotosPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<Set<string>>(() => loadSaved(roomId ?? ''));
   const [selectionMessage, setSelectionMessage] = useState('');
-  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ current: number; total: number; phase?: ZipPhase } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState('');
+  const isMobile = isMobileDevice();
   const selfParticipantId = roomId ? getParticipantId(roomId) : null;
   const isDragSelectingRef = useRef(false);
   const dragStartIndexRef = useRef<number | null>(null);
@@ -287,8 +307,49 @@ export default function PhotosPage() {
     setPreviewPostId(previewablePosts[(previewIndex + 1) % previewablePosts.length].id);
   }
 
+  const downloadAsZipBatch = useCallback(async (targets: Post[]) => {
+    if (!roomId) return;
+    setSelectionMessage('');
+    setProgress({ current: 0, total: targets.length, phase: 'fetching' });
+    let urls: Record<string, string> = {};
+    try {
+      for (const ids of chunk(targets.map(p => p.id), 50)) {
+        const res = await api.getViewUrls(roomId, ids);
+        Object.assign(urls, res.viewUrls);
+      }
+    } catch {
+      setProgress(null);
+      return;
+    }
+    const zipTargets: ZipTarget[] = [];
+    targets.forEach((post, i) => {
+      const url = urls[post.id];
+      if (url) zipTargets.push({ url: resolvePublicMediaUrl(url), filename: buildDownloadFilename(post, i + 1) });
+    });
+    if (zipTargets.length === 0) {
+      setProgress(null);
+      return;
+    }
+    await downloadAsZip(zipTargets, 'photo-download.zip', (p) => {
+      setProgress({ current: p.current, total: p.total, phase: p.phase });
+    });
+    const newSaved = new Set(saved);
+    targets.forEach(post => { if (urls[post.id]) newSaved.add(post.id); });
+    setSaved(newSaved);
+    saveSaved(roomId, newSaved);
+    setTimeout(() => setProgress(null), 800);
+  }, [roomId, saved]);
+
   const downloadPosts = useCallback(async (targets: Post[]) => {
     if (!roomId || targets.length === 0) return;
+    if (targets.length > ZIP_MAX_COUNT) {
+      setSelectionMessage(`一度に保存できる写真は${ZIP_MAX_COUNT}枚までです。`);
+      return;
+    }
+    if (!isMobileDevice() && targets.length >= ZIP_THRESHOLD) {
+      await downloadAsZipBatch(targets);
+      return;
+    }
     downloadCancelledRef.current = false;
     setProgress({ current: 0, total: targets.length });
     let urls: Record<string, string> = {};
@@ -339,7 +400,7 @@ export default function PhotosPage() {
     setSaved(newSaved);
     saveSaved(roomId, newSaved);
     setProgress(null);
-  }, [roomId, saved]);
+  }, [roomId, saved, downloadAsZipBatch]);
 
   function cancelDownload() {
     downloadCancelledRef.current = true;
@@ -349,6 +410,19 @@ export default function PhotosPage() {
 
   async function handleDownload(post: Post) {
     await downloadPosts([post]);
+  }
+
+  async function handleShare(post: Post, sequence: number) {
+    if (!roomId) return;
+    try {
+      const res = await api.getViewUrls(roomId, [post.id]);
+      const url = res.viewUrls[post.id];
+      if (!url) return;
+      const shared = await shareMedia(resolvePublicMediaUrl(url), buildDownloadFilename(post, sequence), post.mime_type);
+      if (!shared) await downloadPosts([post]);
+    } catch {
+      // non-fatal
+    }
   }
 
   function toggleSelectionMode() {
@@ -474,10 +548,12 @@ export default function PhotosPage() {
           url={viewUrls[previewPost.id]}
           index={previewIndex}
           total={previewablePosts.length}
+          isMobile={isMobile}
           onClose={() => setPreviewPostId(null)}
           onPrev={previewPrev}
           onNext={previewNext}
           onDownload={() => handleDownload(previewPost)}
+          onShare={() => handleShare(previewPost, previewIndex + 1)}
         />
       )}
 
@@ -486,7 +562,7 @@ export default function PhotosPage() {
           <Link to={`/room/${roomId}`} style={{ fontSize: 14, color: accentColor, textDecoration: 'none', minHeight: 44, display: 'flex', alignItems: 'center' }}>← 戻る</Link>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 'normal', color: accentColor, flex: 1 }}>写真一覧</h1>
           <span style={{ fontSize: 12, color: '#888' }}>{posts.length}枚</span>
-          {posts.length > 0 && (
+          {posts.length > 0 && !isMobile && (
             <button
               type="button"
               onClick={toggleSelectionMode}
@@ -502,7 +578,7 @@ export default function PhotosPage() {
             </button>
           )}
         </div>
-        {selectionMode && posts.length > 0 && (
+        {selectionMode && posts.length > 0 && !isMobile && (
           <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 16px 12px' }}>
             <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
               選択中: {selected.size} / {MAX_SELECTION}
@@ -527,11 +603,16 @@ export default function PhotosPage() {
         {progress && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
             <p style={{ margin: 0, fontSize: 13, color: '#666' }}>
-              保存中... {progress.current} / {progress.total}
+              {progress.phase === 'fetching' ? `写真を取得中... ${progress.current} / ${progress.total}`
+                : progress.phase === 'zipping' ? 'ZIPを作成中...'
+                : progress.phase === 'done' ? '完了しました'
+                : `保存中... ${progress.current} / ${progress.total}`}
             </p>
-            <button type="button" style={secondaryBtn} onClick={cancelDownload}>
-              中止
-            </button>
+            {!progress.phase && (
+              <button type="button" style={secondaryBtn} onClick={cancelDownload}>
+                中止
+              </button>
+            )}
           </div>
         )}
         {posts.length === 0 ? (
