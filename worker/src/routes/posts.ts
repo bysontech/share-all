@@ -11,6 +11,7 @@ import {
   envSupportsPresignedGet,
   resolvePresignTarget,
   requiresDirectR2Upload,
+  missingPresignConfigKeys,
 } from '../r2';
 import { buildCdnCgiImageUrl } from '../image-transformations';
 import { resolveEventMode } from '../eventMode';
@@ -125,8 +126,9 @@ posts.post('/upload-url', async (c) => {
   if (body.fileSize > maxSize) return err(`File too large (max ${maxSize / 1024 / 1024}MB)`);
 
   if (requiresDirectR2Upload(body.fileSize, isVideo) && !envSupportsPresignedPut(c.env)) {
+    const missing = missingPresignConfigKeys(c.env);
     return err(
-      '動画・大容量ファイルのアップロードには R2 直接アップロード設定が必要です。Worker に R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY を secret として設定してください。',
+      `動画・大容量ファイルのアップロードには R2 直接アップロード設定が必要です。未設定: ${missing.join(', ')}。本番は wrangler secret put、ローカルは worker/.dev.vars に設定してください。`,
       503
     );
   }

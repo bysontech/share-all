@@ -16,12 +16,17 @@ type R2PresignConfig = Pick<Env, 'R2_ACCOUNT_ID' | 'R2_ACCESS_KEY_ID' | 'R2_SECR
 export const PROXY_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
 function hasS3PresignConfig(config: R2PresignConfig): boolean {
-  return !!(
-    config.R2_ACCOUNT_ID?.trim() &&
-    config.R2_ACCESS_KEY_ID?.trim() &&
-    config.R2_SECRET_ACCESS_KEY?.trim() &&
-    config.R2_BUCKET_NAME?.trim()
-  );
+  return missingPresignConfigKeys(config).length === 0;
+}
+
+/** Which R2 S3 presign env keys are unset (for error messages). */
+export function missingPresignConfigKeys(config: R2PresignConfig): string[] {
+  const missing: string[] = [];
+  if (!config.R2_ACCOUNT_ID?.trim()) missing.push('R2_ACCOUNT_ID');
+  if (!config.R2_ACCESS_KEY_ID?.trim()) missing.push('R2_ACCESS_KEY_ID');
+  if (!config.R2_SECRET_ACCESS_KEY?.trim()) missing.push('R2_SECRET_ACCESS_KEY');
+  if (!config.R2_BUCKET_NAME?.trim()) missing.push('R2_BUCKET_NAME');
+  return missing;
 }
 
 export function r2SupportsPresignedPut(target: R2Bucket | R2PresignConfig): boolean {
