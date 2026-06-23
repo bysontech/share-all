@@ -2,15 +2,30 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 
+function mimeToExt(mime: string): string {
+  const map: Record<string, string> = {
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
+  };
+  return map[mime.toLowerCase()] ?? 'mp4';
+}
+
+function buildDownloadFilename(post: Post): string {
+  const short = post.id.slice(0, 8);
+  return `video_${short}.${mimeToExt(post.mime_type)}`;
+}
+
 // ---- Video Modal ----
 
 interface VideoModalProps {
   post: Post;
   videoUrl: string;
+  saving: boolean;
   onClose: () => void;
+  onDownload: () => void;
 }
 
-function VideoModal({ post, videoUrl, onClose }: VideoModalProps) {
+function VideoModal({ post, videoUrl, saving, onClose, onDownload }: VideoModalProps) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -24,7 +39,25 @@ function VideoModal({ post, videoUrl, onClose }: VideoModalProps) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', flexShrink: 0 }}>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 22, cursor: 'pointer', padding: '6px 10px', lineHeight: 1 }}>✕</button>
         <span style={{ fontSize: 13, color: '#ccc' }}>{post.nickname}</span>
-        <div style={{ width: 44 }} />
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={saving}
+          style={{
+            background: '#b8860b',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 6,
+            padding: '8px 18px',
+            fontSize: 13,
+            cursor: saving ? 'wait' : 'pointer',
+            fontWeight: 'bold',
+            minHeight: 40,
+            opacity: saving ? 0.7 : 1,
+          }}
+        >
+          {saving ? '保存中...' : '保存'}
+        </button>
       </div>
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: '0 8px' }}>
         <video
@@ -55,6 +88,7 @@ export default function VideosPage() {
   const [videoUrls, setVideoUrls] = useState<Record<string, string>>({});
   const [playingPost, setPlayingPost] = useState<Post | null>(null);
   const [loadingVideoId, setLoadingVideoId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!roomId) return;
@@ -71,6 +105,34 @@ export default function VideosPage() {
       .catch(() => setError('データの取得に失敗しました。'))
       .finally(() => setLoading(false));
   }, [roomId]);
+
+  async function handleDownload(post: Post) {
+    if (!roomId || saving) return;
+    setSaving(true);
+    try {
+      let url = videoUrls[post.id];
+      if (!url) {
+        const res = await api.getViewUrls(roomId, [post.id]);
+        url = res.viewUrls[post.id];
+        if (url) setVideoUrls(prev => ({ ...prev, [post.id]: url! }));
+      }
+      if (!url) return;
+      const resp = await fetch(resolvePublicMediaUrl(url));
+      if (!resp.ok) throw new Error('fetch failed');
+      const blob = await resp.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = buildDownloadFilename(post);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    } catch {
+      // non-fatal
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function handlePlay(post: Post) {
     if (videoUrls[post.id]) {
@@ -115,7 +177,9 @@ export default function VideosPage() {
         <VideoModal
           post={playingPost}
           videoUrl={videoUrls[playingPost.id]}
+          saving={saving}
           onClose={() => setPlayingPost(null)}
+          onDownload={() => handleDownload(playingPost)}
         />
       )}
 
