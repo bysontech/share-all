@@ -3,7 +3,7 @@ import type { Env } from '../types';
 import { uuid, nowSec, err, ROOM_EXPIRES_AT_PLACEHOLDER_SEC } from '../utils';
 import { getRoomAndValidate } from '../db';
 import { authorizeRoomManage } from '../roomManageAuth';
-import { generatePresignedGetUrl, envSupportsPresignedPut } from '../r2';
+import { generatePresignedGetUrl, envSupportsPresignedGet, resolvePresignTarget } from '../r2';
 import { createViewFileToken } from '../uploadBodyToken';
 import { buildCdnCgiImageUrl } from '../image-transformations';
 import { resolveEventMode, computeNextTransitionAt } from '../eventMode';
@@ -70,7 +70,7 @@ rooms.get('/:roomId/bootstrap', async (c) => {
   ).bind(roomId).first<ThemeRow>();
 
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
-  const usePresigned = envSupportsPresignedPut(c.env);
+  const usePresigned = envSupportsPresignedGet(c.env);
   const proxySecret = c.env.UPLOAD_BODY_SIGNING_SECRET;
   const now = nowSec();
   const exp = now + expirySeconds;
@@ -78,7 +78,7 @@ rooms.get('/:roomId/bootstrap', async (c) => {
 
   async function signKey(fileKey: string, label: string): Promise<string | null> {
     try {
-      if (usePresigned) return await generatePresignedGetUrl(c.env.STORAGE, fileKey, expirySeconds);
+      if (usePresigned) return await generatePresignedGetUrl(resolvePresignTarget(c.env), fileKey, expirySeconds);
       if (proxySecret) {
         const token = await createViewFileToken(proxySecret, { postId: label, roomId, fileKey, exp });
         return `/api/rooms/${roomId}/theme/view-file/${label}?token=${encodeURIComponent(token)}`;

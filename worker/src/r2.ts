@@ -33,6 +33,16 @@ export function envSupportsPresignedPut(env: Env): boolean {
   return r2SupportsPresignedPut(env);
 }
 
+export function envSupportsPresignedGet(env: Env): boolean {
+  return r2SupportsPresignedPut(env);
+}
+
+/** Prefer S3 API credentials; fall back to the R2 bucket binding. */
+export function resolvePresignTarget(env: Env): R2Bucket | R2PresignConfig {
+  if (hasS3PresignConfig(env)) return env;
+  return env.STORAGE;
+}
+
 export function requiresDirectR2Upload(fileSize: number, isVideo: boolean): boolean {
   return isVideo || fileSize > PROXY_UPLOAD_MAX_BYTES;
 }
@@ -74,6 +84,35 @@ async function generateS3PresignedPutUrl(
   return signed.url.toString();
 }
 
+async function generateS3PresignedGetUrl(
+  config: R2PresignConfig,
+  fileKey: string,
+  expirySeconds: number
+): Promise<string> {
+  if (!hasS3PresignConfig(config)) {
+    throw new TypeError('R2 S3 presign config is incomplete');
+  }
+
+  const accountId = config.R2_ACCOUNT_ID!.trim();
+  const accessKeyId = config.R2_ACCESS_KEY_ID!.trim();
+  const secretAccessKey = config.R2_SECRET_ACCESS_KEY!.trim();
+  const bucketName = config.R2_BUCKET_NAME!.trim();
+
+  const client = new AwsClient({
+    accessKeyId,
+    secretAccessKey,
+    service: 's3',
+    region: 'auto',
+  });
+
+  const objectUrl = `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${encodeObjectKey(fileKey)}?X-Amz-Expires=${expirySeconds}`;
+  const signed = await client.sign(
+    new Request(objectUrl, { method: 'GET' }),
+    { aws: { signQuery: true } }
+  );
+  return signed.url.toString();
+}
+
 export async function generatePresignedPutUrl(
   target: R2Bucket | R2PresignConfig,
   fileKey: string,
@@ -98,11 +137,16 @@ export async function generatePresignedPutUrl(
 }
 
 export async function generatePresignedGetUrl(
-  bucket: R2Bucket,
+  target: R2Bucket | R2PresignConfig,
   fileKey: string,
   expirySeconds: number
 ): Promise<string> {
-  const b = bucket as R2WithPresign;
+  const config = target as R2PresignConfig;
+  if (hasS3PresignConfig(config)) {
+    return generateS3PresignedGetUrl(config, fileKey, expirySeconds);
+  }
+
+  const b = target as R2WithPresign;
   const create = b.createPresignedUrl;
   if (typeof create !== 'function') {
     throw new TypeError('R2Bucket.createPresignedUrl is not available');

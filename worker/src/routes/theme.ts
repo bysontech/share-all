@@ -4,7 +4,7 @@ import { ALLOWED_IMAGE_MIMES, MAX_IMAGE_SIZE } from '../types';
 import { uuid, nowSec, err, getExtFromMime } from '../utils';
 import { getRoomAndValidate } from '../db';
 import { authorizeRoomManage } from '../roomManageAuth';
-import { generatePresignedPutUrl, generatePresignedGetUrl, envSupportsPresignedPut } from '../r2';
+import { generatePresignedPutUrl, generatePresignedGetUrl, envSupportsPresignedPut, envSupportsPresignedGet, resolvePresignTarget } from '../r2';
 import { createUploadBodyToken, createViewFileToken } from '../uploadBodyToken';
 import { buildCdnCgiImageUrl } from '../image-transformations';
 
@@ -267,7 +267,7 @@ theme.post('/view-urls', async (c) => {
   if (!row) return c.json({ viewUrls: {} });
 
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
-  const usePresigned = envSupportsPresignedPut(c.env);
+  const usePresigned = envSupportsPresignedGet(c.env);
   const proxySecret = c.env.UPLOAD_BODY_SIGNING_SECRET;
   const now = nowSec();
   const exp = now + expirySeconds;
@@ -278,7 +278,7 @@ theme.post('/view-urls', async (c) => {
     if (!key) return;
     try {
       if (usePresigned) {
-        viewUrls[label] = await generatePresignedGetUrl(c.env.STORAGE, key, expirySeconds);
+        viewUrls[label] = await generatePresignedGetUrl(resolvePresignTarget(c.env), key, expirySeconds);
       } else if (proxySecret) {
         const token = await createViewFileToken(proxySecret, {
           postId: label,

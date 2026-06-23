@@ -8,6 +8,8 @@ import {
   generatePresignedPutUrl,
   generatePresignedGetUrl,
   envSupportsPresignedPut,
+  envSupportsPresignedGet,
+  resolvePresignTarget,
   requiresDirectR2Upload,
 } from '../r2';
 import { buildCdnCgiImageUrl } from '../image-transformations';
@@ -460,7 +462,7 @@ posts.post('/view-urls', async (c) => {
     body.purpose ?? (body.preferDisplay ? 'display' : null);
 
   const expirySeconds = parseInt(c.env.SIGNED_URL_EXPIRY_VIEW ?? '3600', 10);
-  const usePresigned = envSupportsPresignedPut(c.env);
+  const usePresigned = envSupportsPresignedGet(c.env);
   const proxySecret = c.env.UPLOAD_BODY_SIGNING_SECRET;
 
   if (!usePresigned && !proxySecret) {
@@ -516,7 +518,7 @@ posts.post('/view-urls', async (c) => {
         if (deriv.file_key) {
           try {
             if (usePresigned) {
-              viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, deriv.file_key, expirySeconds);
+              viewUrls[row.id] = await generatePresignedGetUrl(resolvePresignTarget(c.env), deriv.file_key, expirySeconds);
             } else if (proxySecret) {
               const token = await createViewFileToken(proxySecret, {
                 postId: row.id, roomId, fileKey: deriv.file_key, exp,
@@ -553,7 +555,7 @@ posts.post('/view-urls', async (c) => {
         if (displayKey) {
           try {
             if (usePresigned) {
-              viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, displayKey, expirySeconds);
+              viewUrls[row.id] = await generatePresignedGetUrl(resolvePresignTarget(c.env), displayKey, expirySeconds);
             } else {
               const token = await createViewFileToken(proxySecret!, {
                 postId: row.id, roomId, fileKey: displayKey, exp,
@@ -583,7 +585,7 @@ posts.post('/view-urls', async (c) => {
         if (!row.mime_type.startsWith('video/')) {
           try {
             if (usePresigned) {
-              viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
+              viewUrls[row.id] = await generatePresignedGetUrl(resolvePresignTarget(c.env), row.file_key, expirySeconds);
             } else {
               const token = await createViewFileToken(proxySecret!, {
                 postId: row.id, roomId, fileKey: row.file_key, exp,
@@ -618,7 +620,7 @@ posts.post('/view-urls', async (c) => {
 
     async function signKey(postId: string, fileKey: string): Promise<string | null> {
       try {
-        if (usePresigned) return await generatePresignedGetUrl(c.env.STORAGE, fileKey, expirySeconds);
+        if (usePresigned) return await generatePresignedGetUrl(resolvePresignTarget(c.env), fileKey, expirySeconds);
         if (proxySecret) {
           const token = await createViewFileToken(proxySecret, { postId, roomId, fileKey, exp });
           return `/api/rooms/${roomId}/posts/${postId}/view-file?token=${encodeURIComponent(token)}`;
@@ -679,7 +681,7 @@ posts.post('/view-urls', async (c) => {
     postRows.map(async (row) => {
       try {
         if (usePresigned) {
-          viewUrls[row.id] = await generatePresignedGetUrl(c.env.STORAGE, row.file_key, expirySeconds);
+          viewUrls[row.id] = await generatePresignedGetUrl(resolvePresignTarget(c.env), row.file_key, expirySeconds);
         } else {
           const token = await createViewFileToken(proxySecret!, {
             postId: row.id, roomId, fileKey: row.file_key, exp,
