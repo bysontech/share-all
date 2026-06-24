@@ -342,6 +342,17 @@ export default function RoomPage() {
   const [passcodeVerified, setPasscodeVerified] = useState(false);
 
   const [participantId] = useState(() => roomId ? getOrCreateParticipantId(roomId) : '');
+  const feedbackKey = `room-feedback:${roomId}`;
+  const [feedbackDone, setFeedbackDone] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(feedbackKey);
+      const arr = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(arr) ? arr.filter((v): v is string => v === 'ok' || v === 'line') : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const [feedbackMsg, setFeedbackMsg] = useState('');
 
   // Slideshow count
   const [slideshowCount, setSlideshowCount] = useState<number | null>(null);
@@ -382,6 +393,20 @@ export default function RoomPage() {
       .then(r => setSlideshowCount(r.count))
       .catch(() => {});
   }, [roomId, participantId, nickname]);
+
+  async function handleFeedback(kind: 'ok' | 'line') {
+    if (!roomId || feedbackDone.has(kind)) return;
+    try {
+      await api.submitRoomFeedback(roomId, kind);
+      const next = new Set(feedbackDone);
+      next.add(kind);
+      setFeedbackDone(next);
+      localStorage.setItem(feedbackKey, JSON.stringify([...next]));
+      setFeedbackMsg('回答ありがとうございます。');
+    } catch {
+      setFeedbackMsg('送信に失敗しました。時間をおいてもう一度お試しください。');
+    }
+  }
 
   function handleNicknameSubmit() {
     const n = nicknameInput.trim();
@@ -713,6 +738,51 @@ export default function RoomPage() {
         {/* ---- archive: 写真・動画共有 ---- */}
         {eventMode === 'archive' && (
           <>
+            <div style={{ ...cardStyle, textAlign: 'left' }}>
+              <p style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 'bold', color: contentColor }}>
+                写真、動画の共有機能は現在ベータ版です。
+              </p>
+              <p style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.7, color: textColor }}>
+                投稿や保存が使いづらいと感じた場合は教えてください！
+              </p>
+              <p style={{ margin: '0 0 14px', fontSize: 13, lineHeight: 1.7, color: textColor }}>
+                ご要望が多ければ、LINEグループを作成してそちらで共有します。
+              </p>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => handleFeedback('ok')}
+                  disabled={feedbackDone.has('ok')}
+                  style={{
+                    ...primaryBtnStyle,
+                    padding: '10px 16px',
+                    opacity: feedbackDone.has('ok') ? 0.65 : 1,
+                    cursor: feedbackDone.has('ok') ? 'default' : 'pointer',
+                  }}
+                >
+                  問題なく使えた！
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleFeedback('line')}
+                  disabled={feedbackDone.has('line')}
+                  style={{
+                    ...primaryBtnStyle,
+                    background: '#06c755',
+                    padding: '10px 16px',
+                    opacity: feedbackDone.has('line') ? 0.65 : 1,
+                    cursor: feedbackDone.has('line') ? 'default' : 'pointer',
+                  }}
+                >
+                  LINEグループでの共有希望！
+                </button>
+              </div>
+              {feedbackMsg && (
+                <p style={{ margin: '10px 0 0', fontSize: 12, color: hasBg ? 'rgba(255,255,255,0.82)' : '#666' }}>
+                  {feedbackMsg}
+                </p>
+              )}
+            </div>
             <div style={categoryIntroStyle}>
               <h2 style={categoryTitleStyle}>共有用の写真・動画</h2>
               <p style={categoryBodyStyle}>

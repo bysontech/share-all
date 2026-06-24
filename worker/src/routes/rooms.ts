@@ -11,6 +11,7 @@ import { resolveEventMode, computeNextTransitionAt } from '../eventMode';
 type ParamRoomId = { roomId: string };
 
 const VALID_EVENT_MODES = new Set(['draft', 'event_live', 'archive']);
+const VALID_FEEDBACK_KINDS = new Set(['ok', 'line']);
 
 const rooms = new Hono<{ Bindings: Env }>();
 
@@ -144,6 +145,52 @@ rooms.get('/:roomId', async (c) => {
     hasPasscode: !!room.passcode,
     description: room.description,
   });
+});
+
+rooms.post('/:roomId/feedback', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const result = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in result) return err(result.error, result.status);
+
+  const body: { kind?: string } = await c.req.json<{ kind?: string }>().catch(() => ({}));
+  const kind = body.kind;
+  if (!kind || !VALID_FEEDBACK_KINDS.has(kind)) {
+    return err('kind must be ok or line');
+  }
+
+  const now = nowSec();
+  await c.env.DB.prepare(
+    `INSERT INTO room_feedback_counts (room_id, kind, count, updated_at)
+     VALUES (?, ?, 1, ?)
+     ON CONFLICT(room_id, kind) DO UPDATE SET
+       count = count + 1,
+       updated_at = excluded.updated_at`
+  ).bind(roomId, kind, now).run();
+
+  return c.json({ ok: true });
+});
+
+rooms.get('/:roomId/feedback-summary', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const result = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in result) return err(result.error, result.status);
+  const { room } = result;
+
+  if (!(await authorizeRoomManage(c.env, room, c.req.header('X-Host-Token'), c.req.header('Cookie')))) {
+    return err('Unauthorized', 401);
+  }
+
+  type Row = { kind: string; count: number };
+  const { results } = await c.env.DB.prepare(
+    `SELECT kind, count FROM room_feedback_counts WHERE room_id = ?`
+  ).bind(roomId).all<Row>();
+
+  const counts = { ok: 0, line: 0 };
+  for (const row of results) {
+    if (row.kind === 'ok' || row.kind === 'line') counts[row.kind] = row.count;
+  }
+
+  return c.json({ counts });
 });
 
 rooms.get('/:roomId/slideshow-settings', async (c) => {

@@ -10,7 +10,9 @@
     "migrate:local": "wrangler d1 execute share-photo-db --local --file=migrations/0001_init.sql && wrangler d1 execute share-photo-db --local --file=migrations/0002_theme_settings.sql && wrangler d1 execute share-photo-db --local --file=migrations/0003_participant_display.sql && wrangler d1 execute share-photo-db --local --file=migrations/0004_media_derivatives.sql && wrangler d1 execute share-photo-db --local --file=migrations/0005_derivatives_provider.sql",
     "migrate:local:0004-0005": "wrangler d1 execute share-photo-db --local --file=migrations/0004_media_derivatives.sql && wrangler d1 execute share-photo-db --local --file=migrations/0005_derivatives_provider.sql",
     "migrate:local:0006": "wrangler d1 execute share-photo-db --local --file=migrations/0006_post_purpose.sql",
-    "migrate:remote:0006": "wrangler d1 execute share-photo-db --remote --file=migrations/0006_post_purpose.sql"
+    "migrate:remote:0006": "wrangler d1 execute share-photo-db --remote --file=migrations/0006_post_purpose.sql",
+    "migrate:local:0010": "wrangler d1 execute share-photo-db --local --file=migrations/0010_room_feedback_counts.sql",
+    "migrate:remote:0010": "wrangler d1 execute share-photo-db --remote --file=migrations/0010_room_feedback_counts.sql"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",

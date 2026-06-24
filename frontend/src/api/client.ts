@@ -146,6 +146,13 @@ export interface BootstrapResponse {
   nextTransitionAt: number | null;
 }
 
+export interface RoomFeedbackSummary {
+  counts: {
+    ok: number;
+    line: number;
+  };
+}
+
 export interface ThemeViewUrls {
   viewUrls: Record<string, string>;
   expiresAt?: number;
@@ -267,6 +274,17 @@ export const api = {
 
   getEventMode: (roomId: string) =>
     request<EventModeSettings>(`/rooms/${roomId}/event-mode`),
+
+  submitRoomFeedback: (roomId: string, kind: 'ok' | 'line') =>
+    request<{ ok: boolean }>(`/rooms/${roomId}/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({ kind }),
+    }),
+
+  getRoomFeedbackSummary: (roomId: string, hostToken?: string) =>
+    request<RoomFeedbackSummary>(`/rooms/${roomId}/feedback-summary`, {
+      ...(hostToken ? { headers: { 'X-Host-Token': hostToken } } : {}),
+    }),
 
   updateEventMode: (
     roomId: string,

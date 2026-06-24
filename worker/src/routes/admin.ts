@@ -282,6 +282,7 @@ admin.delete('/rooms/:roomId', async (c) => {
   await c.env.DB.prepare('DELETE FROM posts WHERE room_id = ?').bind(roomId).run();
   await c.env.DB.prepare('DELETE FROM slideshow_settings WHERE room_id = ?').bind(roomId).run();
   await c.env.DB.prepare('DELETE FROM theme_settings WHERE room_id = ?').bind(roomId).run();
+  await c.env.DB.prepare('DELETE FROM room_feedback_counts WHERE room_id = ?').bind(roomId).run();
   await c.env.DB.prepare('DELETE FROM rooms WHERE id = ?').bind(roomId).run();
 
   return c.json({ ok: true, deletedPosts: postIds.length });

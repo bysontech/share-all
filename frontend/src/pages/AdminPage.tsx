@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, ApiError, type RoomInfo, type AdminPost, type SlideshowSettings, type ThemeSettings, type EventMode, type EventModeSettings } from '../api/client';
+import { api, ApiError, type RoomInfo, type AdminPost, type SlideshowSettings, type ThemeSettings, type EventMode, type EventModeSettings, type RoomFeedbackSummary } from '../api/client';
 import { putToR2 } from '../api/client';
 
 // ---- Sub-components ----
@@ -573,6 +573,8 @@ export default function AdminPage() {
   const [settingsMsg, setSettingsMsg] = useState('');
 
   const [theme, setTheme] = useState<ThemeSettings>(EMPTY_THEME);
+  const [feedbackSummary, setFeedbackSummary] = useState<RoomFeedbackSummary['counts']>({ ok: 0, line: 0 });
+  const [feedbackError, setFeedbackError] = useState('');
 
   const participantUrl = roomId ? `${window.location.origin}/room/${roomId}` : '';
 
@@ -590,6 +592,12 @@ export default function AdminPage() {
     if (!roomId) return;
     api.getSlideshowSettings(roomId).then(setSettings).catch(() => {});
     api.getTheme(roomId).then(setTheme).catch(() => {});
+    api.getRoomFeedbackSummary(roomId)
+      .then((res) => {
+        setFeedbackSummary(res.counts);
+        setFeedbackError('');
+      })
+      .catch((e) => setFeedbackError(e instanceof ApiError ? e.message : 'フィードバック集計の取得に失敗しました'));
   }, [roomId]);
 
   const loadPosts = useCallback(async () => {
@@ -732,6 +740,24 @@ export default function AdminPage() {
           {actionMsg}
         </div>
       )}
+
+      {/* Feedback summary */}
+      <section style={{ background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 6, padding: 14, marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>ベータ版フィードバック</h3>
+          {feedbackError && <span style={{ fontSize: 12, color: '#b85c00' }}>取得エラー: {feedbackError}</span>}
+        </div>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+          <div style={{ background: '#fff', borderRadius: 6, padding: '10px 14px', minWidth: 150, border: '1px solid #f0e0a0' }}>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>問題なく使えた 👍</div>
+            <div style={{ fontSize: 24, fontWeight: 'bold', color: '#5d4037' }}>{feedbackSummary.ok}</div>
+          </div>
+          <div style={{ background: '#fff', borderRadius: 6, padding: '10px 14px', minWidth: 180, border: '1px solid #f0e0a0' }}>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>LINEグループ共有希望 🙋</div>
+            <div style={{ fontSize: 24, fontWeight: 'bold', color: '#5d4037' }}>{feedbackSummary.line}</div>
+          </div>
+        </div>
+      </section>
 
       {/* Post list */}
       <section style={{ marginBottom: 32 }}>
