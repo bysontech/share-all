@@ -768,7 +768,7 @@ export default function RoomPage() {
                   disabled={feedbackDone.has('line')}
                   style={{
                     ...primaryBtnStyle,
-                    background: '#06c755',
+                    background: '#8a6508',
                     padding: '10px 16px',
                     opacity: feedbackDone.has('line') ? 0.65 : 1,
                     cursor: feedbackDone.has('line') ? 'default' : 'pointer',

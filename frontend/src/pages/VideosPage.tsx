@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 import { isMobileDevice } from '../utils/device';
-import { isShareSupported, shareVideoUrl } from '../utils/share';
 
 type VideoSaveProgress = {
   phase: 'fetching' | 'done' | 'error';
@@ -37,10 +36,9 @@ interface VideoModalProps {
   saveStatus: string;
   onClose: () => void;
   onDownload: () => void;
-  onShare: () => void;
 }
 
-function VideoModal({ post, videoUrl, isMobile, saveStatus, onClose, onDownload, onShare }: VideoModalProps) {
+function VideoModal({ post, videoUrl, isMobile, saveStatus, onClose, onDownload }: VideoModalProps) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -55,15 +53,6 @@ function VideoModal({ post, videoUrl, isMobile, saveStatus, onClose, onDownload,
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 22, cursor: 'pointer', padding: '6px 10px', lineHeight: 1 }}>✕</button>
         <span style={{ fontSize: 13, color: '#ccc' }}>{post.nickname}</span>
         <div style={{ display: 'flex', gap: 8 }}>
-          {isMobile && isShareSupported() && (
-            <button
-              type="button"
-              onClick={onShare}
-              style={{ background: '#444', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 14px', fontSize: 13, cursor: 'pointer', fontWeight: 'bold', minHeight: 40 }}
-            >
-              共有
-            </button>
-          )}
           <button
             type="button"
             onClick={onDownload}
@@ -79,7 +68,7 @@ function VideoModal({ post, videoUrl, isMobile, saveStatus, onClose, onDownload,
               minHeight: 40,
             }}
           >
-            保存
+            {isMobile ? 'ファイルに保存' : '保存'}
           </button>
         </div>
       </div>
@@ -96,7 +85,7 @@ function VideoModal({ post, videoUrl, isMobile, saveStatus, onClose, onDownload,
         {post.nickname}
         <span style={{ marginLeft: 10, fontSize: 11, color: '#777' }}>{new Date(post.created_at * 1000).toLocaleString('ja-JP')}</span>
         <div style={{ marginTop: 8, fontSize: 12, color: '#aaa' }}>
-          {saveStatus || '動画は端末によってファイル保存になる場合があります'}
+          {saveStatus || '容量が大きいと再生されないことがあります。保存する場合は「ファイルに保存」をお試しください。'}
         </div>
       </div>
     </div>
@@ -166,13 +155,6 @@ export default function VideosPage() {
     }
   }
 
-  async function handleShare(post: Post) {
-    const url = videoUrls[post.id];
-    if (!url) return;
-    const shared = await shareVideoUrl(resolvePublicMediaUrl(url), post.nickname);
-    if (!shared) handleDownload(post);
-  }
-
   async function handlePlay(post: Post) {
     setSaveStatus('');
     if (videoUrls[post.id]) {
@@ -231,7 +213,6 @@ export default function VideosPage() {
           saveStatus={saveStatus}
           onClose={() => setPlayingPost(null)}
           onDownload={() => handleDownload(playingPost)}
-          onShare={() => handleShare(playingPost)}
         />
       )}
 
