@@ -1,33 +1,23 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
-import { isShareSupported, shareMedia } from '../utils/share';
-
-function mimeToExt(mime: string): string {
-  const map: Record<string, string> = {
-    'video/mp4': 'mp4',
-    'video/quicktime': 'mov',
-  };
-  return map[mime.toLowerCase()] ?? 'mp4';
-}
-
-function buildDownloadFilename(post: Post): string {
-  const short = post.id.slice(0, 8);
-  return `video_${short}.${mimeToExt(post.mime_type)}`;
-}
+import { isMobileDevice } from '../utils/device';
+import { isShareSupported, shareVideoUrl } from '../utils/share';
+import { openVideoUrl } from '../utils/videoDownload';
 
 // ---- Video Modal ----
 
 interface VideoModalProps {
   post: Post;
   videoUrl: string;
-  saving: boolean;
+  isMobile: boolean;
+  saveStatus: string;
   onClose: () => void;
   onDownload: () => void;
   onShare: () => void;
 }
 
-function VideoModal({ post, videoUrl, saving, onClose, onDownload, onShare }: VideoModalProps) {
+function VideoModal({ post, videoUrl, isMobile, saveStatus, onClose, onDownload, onShare }: VideoModalProps) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -42,7 +32,7 @@ function VideoModal({ post, videoUrl, saving, onClose, onDownload, onShare }: Vi
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 22, cursor: 'pointer', padding: '6px 10px', lineHeight: 1 }}>✕</button>
         <span style={{ fontSize: 13, color: '#ccc' }}>{post.nickname}</span>
         <div style={{ display: 'flex', gap: 8 }}>
-          {isShareSupported() && (
+          {isMobile && isShareSupported() && (
             <button
               type="button"
               onClick={onShare}
@@ -54,7 +44,6 @@ function VideoModal({ post, videoUrl, saving, onClose, onDownload, onShare }: Vi
           <button
             type="button"
             onClick={onDownload}
-            disabled={saving}
             style={{
               background: '#b8860b',
               color: '#fff',
@@ -62,13 +51,12 @@ function VideoModal({ post, videoUrl, saving, onClose, onDownload, onShare }: Vi
               borderRadius: 6,
               padding: '8px 18px',
               fontSize: 13,
-              cursor: saving ? 'wait' : 'pointer',
+              cursor: 'pointer',
               fontWeight: 'bold',
               minHeight: 40,
-              opacity: saving ? 0.7 : 1,
             }}
           >
-            {saving ? '保存中...' : '保存'}
+            保存
           </button>
         </div>
       </div>
@@ -85,7 +73,7 @@ function VideoModal({ post, videoUrl, saving, onClose, onDownload, onShare }: Vi
         {post.nickname}
         <span style={{ marginLeft: 10, fontSize: 11, color: '#777' }}>{new Date(post.created_at * 1000).toLocaleString('ja-JP')}</span>
         <div style={{ marginTop: 8, fontSize: 12, color: '#aaa' }}>
-          動画は端末によってファイル保存になる場合があります
+          {saveStatus || '動画は端末によってファイル保存になる場合があります'}
         </div>
       </div>
     </div>
@@ -104,7 +92,8 @@ export default function VideosPage() {
   const [videoUrls, setVideoUrls] = useState<Record<string, string>>({});
   const [playingPost, setPlayingPost] = useState<Post | null>(null);
   const [loadingVideoId, setLoadingVideoId] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('');
+  const isMobile = isMobileDevice();
 
   useEffect(() => {
     if (!roomId) return;
@@ -122,52 +111,22 @@ export default function VideosPage() {
       .finally(() => setLoading(false));
   }, [roomId]);
 
-  async function handleDownload(post: Post) {
-    if (!roomId || saving) return;
-    setSaving(true);
-    try {
-      let url = videoUrls[post.id];
-      if (!url) {
-        const res = await api.getViewUrls(roomId, [post.id]);
-        url = res.viewUrls[post.id];
-        if (url) setVideoUrls(prev => ({ ...prev, [post.id]: url! }));
-      }
-      if (!url) return;
-      const resp = await fetch(resolvePublicMediaUrl(url));
-      if (!resp.ok) throw new Error('fetch failed');
-      const blob = await resp.blob();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = buildDownloadFilename(post);
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-    } catch {
-      // non-fatal
-    } finally {
-      setSaving(false);
-    }
+  function handleDownload(post: Post) {
+    const url = videoUrls[post.id];
+    if (!url) return;
+    openVideoUrl(resolvePublicMediaUrl(url));
+    setSaveStatus('動画を開きました。保存はブラウザのダウンロード状況をご確認ください。');
   }
 
   async function handleShare(post: Post) {
-    if (!roomId) return;
-    try {
-      let url = videoUrls[post.id];
-      if (!url) {
-        const res = await api.getViewUrls(roomId, [post.id]);
-        url = res.viewUrls[post.id];
-        if (url) setVideoUrls(prev => ({ ...prev, [post.id]: url! }));
-      }
-      if (!url) return;
-      const shared = await shareMedia(resolvePublicMediaUrl(url), buildDownloadFilename(post), post.mime_type);
-      if (!shared) await handleDownload(post);
-    } catch {
-      // non-fatal
-    }
+    const url = videoUrls[post.id];
+    if (!url) return;
+    const shared = await shareVideoUrl(resolvePublicMediaUrl(url), post.nickname);
+    if (!shared) handleDownload(post);
   }
 
   async function handlePlay(post: Post) {
+    setSaveStatus('');
     if (videoUrls[post.id]) {
       setPlayingPost(post);
       return;
@@ -210,7 +169,8 @@ export default function VideosPage() {
         <VideoModal
           post={playingPost}
           videoUrl={videoUrls[playingPost.id]}
-          saving={saving}
+          isMobile={isMobile}
+          saveStatus={saveStatus}
           onClose={() => setPlayingPost(null)}
           onDownload={() => handleDownload(playingPost)}
           onShare={() => handleShare(playingPost)}

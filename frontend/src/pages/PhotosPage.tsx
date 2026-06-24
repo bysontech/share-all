@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 import { getParticipantId } from '../utils/participantId';
 import { isMobileDevice } from '../utils/device';
-import { downloadAsZip, ZIP_THRESHOLD, ZIP_MAX_COUNT, type ZipPhase, type ZipTarget } from '../utils/zipDownload';
+import { downloadAsZip, ZIP_THRESHOLD, ZIP_MAX_COUNT, formatSaveProgress, type SaveProgress, type ZipTarget } from '../utils/zipDownload';
 import { isShareSupported, shareMedia } from '../utils/share';
 
 const MAX_SELECTION = ZIP_MAX_COUNT;
@@ -127,7 +127,7 @@ export default function PhotosPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<Set<string>>(() => loadSaved(roomId ?? ''));
   const [selectionMessage, setSelectionMessage] = useState('');
-  const [progress, setProgress] = useState<{ current: number; total: number; phase?: ZipPhase } | null>(null);
+  const [progress, setProgress] = useState<SaveProgress | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState('');
@@ -310,7 +310,7 @@ export default function PhotosPage() {
   const downloadAsZipBatch = useCallback(async (targets: Post[]) => {
     if (!roomId) return;
     setSelectionMessage('');
-    setProgress({ current: 0, total: targets.length, phase: 'fetching' });
+    setProgress({ current: 0, total: targets.length, phase: 'preparing' });
     let urls: Record<string, string> = {};
     try {
       for (const ids of chunk(targets.map(p => p.id), 50)) {
@@ -318,7 +318,8 @@ export default function PhotosPage() {
         Object.assign(urls, res.viewUrls);
       }
     } catch {
-      setProgress(null);
+      setProgress({ current: 0, total: targets.length, phase: 'error' });
+      setTimeout(() => setProgress(null), 3000);
       return;
     }
     const zipTargets: ZipTarget[] = [];
@@ -327,11 +328,12 @@ export default function PhotosPage() {
       if (url) zipTargets.push({ url: resolvePublicMediaUrl(url), filename: buildDownloadFilename(post, i + 1) });
     });
     if (zipTargets.length === 0) {
-      setProgress(null);
+      setProgress({ current: 0, total: targets.length, phase: 'error' });
+      setTimeout(() => setProgress(null), 3000);
       return;
     }
     await downloadAsZip(zipTargets, 'photo-download.zip', (p) => {
-      setProgress({ current: p.current, total: p.total, phase: p.phase });
+      setProgress({ current: p.current, total: p.total, phase: p.phase, percent: p.percent });
     });
     const newSaved = new Set(saved);
     targets.forEach(post => { if (urls[post.id]) newSaved.add(post.id); });
@@ -351,7 +353,7 @@ export default function PhotosPage() {
       return;
     }
     downloadCancelledRef.current = false;
-    setProgress({ current: 0, total: targets.length });
+    setProgress({ current: 0, total: targets.length, phase: 'preparing' });
     let urls: Record<string, string> = {};
     try {
       for (const ids of chunk(targets.map(p => p.id), 50)) {
@@ -360,7 +362,8 @@ export default function PhotosPage() {
         Object.assign(urls, res.viewUrls);
       }
     } catch {
-      setProgress(null);
+      setProgress({ current: 0, total: targets.length, phase: 'error' });
+      setTimeout(() => setProgress(null), 3000);
       return;
     }
     if (downloadCancelledRef.current) {
@@ -372,7 +375,7 @@ export default function PhotosPage() {
     for (const [index, post] of targets.entries()) {
       if (downloadCancelledRef.current) break;
       const url = urls[post.id];
-      if (!url) { done++; setProgress({ current: done, total: targets.length }); continue; }
+      if (!url) { done++; setProgress({ current: done, total: targets.length, phase: 'fetching', cancellable: true }); continue; }
       try {
         const controller = new AbortController();
         downloadAbortRef.current = controller;
@@ -395,7 +398,7 @@ export default function PhotosPage() {
       }
       if (downloadCancelledRef.current) break;
       done++;
-      setProgress({ current: done, total: targets.length });
+      setProgress({ current: done, total: targets.length, phase: 'fetching', cancellable: true });
     }
     setSaved(newSaved);
     saveSaved(roomId, newSaved);
@@ -602,13 +605,10 @@ export default function PhotosPage() {
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '16px 16px 40px' }}>
         {progress && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-            <p style={{ margin: 0, fontSize: 13, color: '#666' }}>
-              {progress.phase === 'fetching' ? `写真を取得中... ${progress.current} / ${progress.total}`
-                : progress.phase === 'zipping' ? 'ZIPを作成中...'
-                : progress.phase === 'done' ? '完了しました'
-                : `保存中... ${progress.current} / ${progress.total}`}
+            <p style={{ margin: 0, fontSize: 13, color: progress.phase === 'error' ? '#c00' : '#666' }}>
+              {formatSaveProgress(progress)}
             </p>
-            {!progress.phase && (
+            {progress.cancellable && (
               <button type="button" style={secondaryBtn} onClick={cancelDownload}>
                 中止
               </button>
