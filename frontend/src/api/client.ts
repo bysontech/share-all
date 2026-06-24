@@ -153,6 +153,10 @@ export interface RoomFeedbackSummary {
   };
 }
 
+export interface RoomFeedbackResponse {
+  kind: 'ok' | 'line' | null;
+}
+
 export interface ThemeViewUrls {
   viewUrls: Record<string, string>;
   expiresAt?: number;
@@ -275,10 +279,13 @@ export const api = {
   getEventMode: (roomId: string) =>
     request<EventModeSettings>(`/rooms/${roomId}/event-mode`),
 
-  submitRoomFeedback: (roomId: string, kind: 'ok' | 'line') =>
-    request<{ ok: boolean }>(`/rooms/${roomId}/feedback`, {
+  getRoomFeedback: (roomId: string, participantId: string) =>
+    request<RoomFeedbackResponse>(`/rooms/${roomId}/feedback?participantId=${encodeURIComponent(participantId)}`),
+
+  submitRoomFeedback: (roomId: string, kind: 'ok' | 'line', participantId: string) =>
+    request<{ kind: 'ok' | 'line'; previousKind: 'ok' | 'line' | null; changed: boolean }>(`/rooms/${roomId}/feedback`, {
       method: 'POST',
-      body: JSON.stringify({ kind }),
+      body: JSON.stringify({ kind, participantId }),
     }),
 
   getRoomFeedbackSummary: (roomId: string, hostToken?: string) =>

@@ -79,7 +79,20 @@ function PreviewModal({ post, url, index, total, isMobile, onClose, onPrev, onNe
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', flexShrink: 0 }}>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 22, cursor: 'pointer', padding: '6px 10px', lineHeight: 1 }}>✕</button>
         <span style={{ fontSize: 13, color: '#999' }}>{index + 1} / {total}</span>
-        <button onClick={onDownload} style={{ background: '#b8860b', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 18px', fontSize: 13, cursor: 'pointer', fontWeight: 'bold', minHeight: 40 }}>保存</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {isMobile && isShareSupported() && (
+            <button
+              type="button"
+              onClick={onShare}
+              style={{ background: '#444', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 14px', fontSize: 13, cursor: 'pointer', fontWeight: 'bold', minHeight: 40 }}
+            >
+              共有
+            </button>
+          )}
+          <button onClick={onDownload} style={{ background: '#b8860b', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 18px', fontSize: 13, cursor: 'pointer', fontWeight: 'bold', minHeight: 40 }}>
+            {isMobile ? 'ファイルに保存' : '保存'}
+          </button>
+        </div>
       </div>
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <img key={post.id} src={resolvePublicMediaUrl(url)} alt={post.nickname}
@@ -97,15 +110,6 @@ function PreviewModal({ post, url, index, total, isMobile, onClose, onPrev, onNe
         {isMobile && (
           <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: '#aaa' }}>写真を開いて共有または保存してください</span>
-            {isShareSupported() && (
-              <button
-                type="button"
-                onClick={onShare}
-                style={{ background: '#444', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer', minHeight: 32 }}
-              >
-                共有
-              </button>
-            )}
           </div>
         )}
       </div>

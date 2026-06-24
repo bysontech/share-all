@@ -85,7 +85,7 @@ function VideoModal({ post, videoUrl, isMobile, saveStatus, onClose, onDownload 
         {post.nickname}
         <span style={{ marginLeft: 10, fontSize: 11, color: '#777' }}>{new Date(post.created_at * 1000).toLocaleString('ja-JP')}</span>
         <div style={{ marginTop: 8, fontSize: 12, color: '#aaa' }}>
-          {saveStatus || '容量が大きいと再生されないことがあります。保存する場合は「ファイルに保存」をお試しください。'}
+          {saveStatus || '容量が大きいと再生されないことがあります。'}
         </div>
       </div>
     </div>

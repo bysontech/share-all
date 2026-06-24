@@ -15,6 +15,29 @@ const VALID_FEEDBACK_KINDS = new Set(['ok', 'line']);
 
 const rooms = new Hono<{ Bindings: Env }>();
 
+async function ensureFeedbackTables(db: D1Database): Promise<void> {
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS room_feedback_counts (
+      room_id    TEXT NOT NULL,
+      kind       TEXT NOT NULL CHECK (kind IN ('ok', 'line')),
+      count      INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (room_id, kind),
+      FOREIGN KEY (room_id) REFERENCES rooms(id)
+    )`
+  ).run();
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS room_feedback_responses (
+      room_id        TEXT NOT NULL,
+      participant_id TEXT NOT NULL,
+      kind           TEXT NOT NULL CHECK (kind IN ('ok', 'line')),
+      updated_at     INTEGER NOT NULL,
+      PRIMARY KEY (room_id, participant_id),
+      FOREIGN KEY (room_id) REFERENCES rooms(id)
+    )`
+  ).run();
+}
+
 rooms.post('/', async (c) => {
   const body = await c.req.json<{ name?: string; passcode?: string; description?: string }>();
   if (!body.name || body.name.trim() === '') {
@@ -147,18 +170,66 @@ rooms.get('/:roomId', async (c) => {
   });
 });
 
+rooms.get('/:roomId/feedback', async (c) => {
+  const { roomId } = c.req.param() as ParamRoomId;
+  const result = await getRoomAndValidate(c.env.DB, roomId);
+  if ('error' in result) return err(result.error, result.status);
+
+  const participantId = c.req.query('participantId')?.trim();
+  if (!participantId) return err('participantId is required');
+
+  await ensureFeedbackTables(c.env.DB);
+  const row = await c.env.DB.prepare(
+    `SELECT kind FROM room_feedback_responses WHERE room_id = ? AND participant_id = ?`
+  ).bind(roomId, participantId).first<{ kind: string }>();
+
+  return c.json({ kind: row?.kind === 'ok' || row?.kind === 'line' ? row.kind : null });
+});
+
 rooms.post('/:roomId/feedback', async (c) => {
   const { roomId } = c.req.param() as ParamRoomId;
   const result = await getRoomAndValidate(c.env.DB, roomId);
   if ('error' in result) return err(result.error, result.status);
 
-  const body: { kind?: string } = await c.req.json<{ kind?: string }>().catch(() => ({}));
+  const body: { kind?: string; participantId?: string } = await c.req.json<{ kind?: string; participantId?: string }>().catch(() => ({}));
   const kind = body.kind;
   if (!kind || !VALID_FEEDBACK_KINDS.has(kind)) {
     return err('kind must be ok or line');
   }
+  const participantId = body.participantId?.trim();
+  if (!participantId) return err('participantId is required');
 
   const now = nowSec();
+  await ensureFeedbackTables(c.env.DB);
+
+  const existing = await c.env.DB.prepare(
+    `SELECT kind FROM room_feedback_responses WHERE room_id = ? AND participant_id = ?`
+  ).bind(roomId, participantId).first<{ kind: string }>();
+  const previousKind = existing?.kind === 'ok' || existing?.kind === 'line' ? existing.kind : null;
+
+  if (previousKind === kind) {
+    return c.json({ kind, previousKind, changed: false });
+  }
+
+  if (previousKind) {
+    await c.env.DB.prepare(
+      `UPDATE room_feedback_counts
+       SET count = CASE WHEN count > 0 THEN count - 1 ELSE 0 END,
+           updated_at = ?
+       WHERE room_id = ? AND kind = ?`
+    ).bind(now, roomId, previousKind).run();
+    await c.env.DB.prepare(
+      `UPDATE room_feedback_responses
+       SET kind = ?, updated_at = ?
+       WHERE room_id = ? AND participant_id = ?`
+    ).bind(kind, now, roomId, participantId).run();
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO room_feedback_responses (room_id, participant_id, kind, updated_at)
+       VALUES (?, ?, ?, ?)`
+    ).bind(roomId, participantId, kind, now).run();
+  }
+
   await c.env.DB.prepare(
     `INSERT INTO room_feedback_counts (room_id, kind, count, updated_at)
      VALUES (?, ?, 1, ?)
@@ -167,7 +238,7 @@ rooms.post('/:roomId/feedback', async (c) => {
        updated_at = excluded.updated_at`
   ).bind(roomId, kind, now).run();
 
-  return c.json({ ok: true });
+  return c.json({ kind, previousKind, changed: true });
 });
 
 rooms.get('/:roomId/feedback-summary', async (c) => {
@@ -180,6 +251,7 @@ rooms.get('/:roomId/feedback-summary', async (c) => {
     return err('Unauthorized', 401);
   }
 
+  await ensureFeedbackTables(c.env.DB);
   type Row = { kind: string; count: number };
   const { results } = await c.env.DB.prepare(
     `SELECT kind, count FROM room_feedback_counts WHERE room_id = ?`

@@ -342,16 +342,9 @@ export default function RoomPage() {
   const [passcodeVerified, setPasscodeVerified] = useState(false);
 
   const [participantId] = useState(() => roomId ? getOrCreateParticipantId(roomId) : '');
-  const feedbackKey = `room-feedback:${roomId}`;
-  const [feedbackDone, setFeedbackDone] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(feedbackKey);
-      const arr = raw ? JSON.parse(raw) : [];
-      return new Set(Array.isArray(arr) ? arr.filter((v): v is string => v === 'ok' || v === 'line') : []);
-    } catch {
-      return new Set();
-    }
-  });
+  const [feedbackAnswer, setFeedbackAnswer] = useState<'ok' | 'line' | null>(null);
+  const [feedbackEditing, setFeedbackEditing] = useState(false);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState('');
 
   // Slideshow count
@@ -394,17 +387,39 @@ export default function RoomPage() {
       .catch(() => {});
   }, [roomId, participantId, nickname]);
 
+  useEffect(() => {
+    if (!roomId || !participantId || eventMode !== 'archive') return;
+    setFeedbackLoading(true);
+    api.getRoomFeedback(roomId, participantId)
+      .then((res) => {
+        setFeedbackAnswer(res.kind);
+        setFeedbackEditing(false);
+      })
+      .catch(() => {})
+      .finally(() => setFeedbackLoading(false));
+  }, [roomId, participantId, eventMode]);
+
+  function feedbackLabel(kind: 'ok' | 'line') {
+    return kind === 'ok' ? '問題なく使えた！' : 'LINEグループでの共有希望！';
+  }
+
   async function handleFeedback(kind: 'ok' | 'line') {
-    if (!roomId || feedbackDone.has(kind)) return;
+    if (!roomId || feedbackLoading) return;
+    if (feedbackAnswer === kind) {
+      setFeedbackMsg(`前回も「${feedbackLabel(kind)}」と回答しています。`);
+      setFeedbackEditing(false);
+      return;
+    }
+    setFeedbackLoading(true);
     try {
-      await api.submitRoomFeedback(roomId, kind);
-      const next = new Set(feedbackDone);
-      next.add(kind);
-      setFeedbackDone(next);
-      localStorage.setItem(feedbackKey, JSON.stringify([...next]));
-      setFeedbackMsg('回答ありがとうございます。');
+      await api.submitRoomFeedback(roomId, kind, participantId);
+      setFeedbackAnswer(kind);
+      setFeedbackEditing(false);
+      setFeedbackMsg(feedbackAnswer ? '回答を変更しました。' : '回答ありがとうございます。');
     } catch {
       setFeedbackMsg('送信に失敗しました。時間をおいてもう一度お試しください。');
+    } finally {
+      setFeedbackLoading(false);
     }
   }
 
@@ -748,35 +763,50 @@ export default function RoomPage() {
               <p style={{ margin: '0 0 14px', fontSize: 13, lineHeight: 1.7, color: textColor }}>
                 ご要望が多ければ、LINEグループを作成してそちらで共有します。
               </p>
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  onClick={() => handleFeedback('ok')}
-                  disabled={feedbackDone.has('ok')}
-                  style={{
-                    ...primaryBtnStyle,
-                    padding: '10px 16px',
-                    opacity: feedbackDone.has('ok') ? 0.65 : 1,
-                    cursor: feedbackDone.has('ok') ? 'default' : 'pointer',
-                  }}
-                >
-                  問題なく使えた！
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleFeedback('line')}
-                  disabled={feedbackDone.has('line')}
-                  style={{
-                    ...primaryBtnStyle,
-                    background: '#8a6508',
-                    padding: '10px 16px',
-                    opacity: feedbackDone.has('line') ? 0.65 : 1,
-                    cursor: feedbackDone.has('line') ? 'default' : 'pointer',
-                  }}
-                >
-                  LINEグループでの共有希望！
-                </button>
-              </div>
+              {feedbackAnswer && !feedbackEditing ? (
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, color: textColor }}>
+                    回答済み: {feedbackLabel(feedbackAnswer)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setFeedbackEditing(true); setFeedbackMsg(''); }}
+                    style={{ ...primaryBtnStyle, background: '#6c757d', padding: '8px 14px', fontSize: 13 }}
+                  >
+                    回答を変更する
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleFeedback('ok')}
+                    disabled={feedbackLoading}
+                    style={{
+                      ...primaryBtnStyle,
+                      padding: '10px 16px',
+                      opacity: feedbackLoading ? 0.65 : 1,
+                      cursor: feedbackLoading ? 'wait' : 'pointer',
+                    }}
+                  >
+                    問題なく使えた！
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFeedback('line')}
+                    disabled={feedbackLoading}
+                    style={{
+                      ...primaryBtnStyle,
+                      background: '#8a6508',
+                      padding: '10px 16px',
+                      opacity: feedbackLoading ? 0.65 : 1,
+                      cursor: feedbackLoading ? 'wait' : 'pointer',
+                    }}
+                  >
+                    LINEグループでの共有希望！
+                  </button>
+                </div>
+              )}
               {feedbackMsg && (
                 <p style={{ margin: '10px 0 0', fontSize: 12, color: hasBg ? 'rgba(255,255,255,0.82)' : '#666' }}>
                   {feedbackMsg}
