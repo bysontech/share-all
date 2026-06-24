@@ -600,21 +600,23 @@ export default function PhotosPage() {
             </div>
           </div>
         )}
+        {progress && (
+          <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 16px 12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, color: progress.phase === 'error' ? '#c00' : '#666', fontWeight: 'bold' }}>
+                {formatSaveProgress(progress)}
+              </span>
+              {progress.cancellable && (
+                <button type="button" style={{ ...secondaryBtn, minHeight: 34, padding: '6px 12px' }} onClick={cancelDownload}>
+                  中止
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '16px 16px 40px' }}>
-        {progress && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-            <p style={{ margin: 0, fontSize: 13, color: progress.phase === 'error' ? '#c00' : '#666' }}>
-              {formatSaveProgress(progress)}
-            </p>
-            {progress.cancellable && (
-              <button type="button" style={secondaryBtn} onClick={cancelDownload}>
-                中止
-              </button>
-            )}
-          </div>
-        )}
         {posts.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '60px 0', color: '#888', fontSize: 14 }}>
             <p style={{ margin: 0 }}>まだ共有された写真はありません</p>
