@@ -25,3 +25,22 @@ export async function shareMedia(url: string, filename: string, mimeType: string
     return false;
   }
 }
+
+/**
+ * Shares a URL via the Web Share API instead of a File — used for video, where
+ * fetching the file into a Blob would hit CORS on R2 presigned URLs and be slow
+ * for large files. The shared link is a presigned R2 URL, so it expires; that's
+ * an accepted tradeoff rather than something this function can fix.
+ */
+export async function shareVideoUrl(url: string, title: string): Promise<boolean> {
+  if (!isShareSupported()) return false;
+  try {
+    const shareData: ShareData = { title, url };
+    if (navigator.canShare && !navigator.canShare(shareData)) return false;
+    await navigator.share(shareData);
+    return true;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return true;
+    return false;
+  }
+}

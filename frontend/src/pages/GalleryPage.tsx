@@ -3,8 +3,9 @@ import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 import { getParticipantId } from '../utils/participantId';
 import { isMobileDevice } from '../utils/device';
-import { downloadAsZip, ZIP_THRESHOLD, ZIP_MAX_COUNT, type ZipPhase, type ZipTarget } from '../utils/zipDownload';
+import { downloadAsZip, ZIP_THRESHOLD, ZIP_MAX_COUNT, formatSaveProgress, type SaveProgress, type ZipTarget } from '../utils/zipDownload';
 import { isShareSupported, shareMedia } from '../utils/share';
+import { openVideoUrl } from '../utils/videoDownload';
 
 const SAVED_KEY = (roomId: string) => `room:${roomId}:savedPostIds`;
 
@@ -217,7 +218,7 @@ export default function GalleryPage() {
   const selfParticipantId = roomId ? getParticipantId(roomId) : null;
   const isMobile = isMobileDevice();
 
-  const [progress, setProgress] = useState<{ current: number; total: number; phase?: ZipPhase } | null>(null);
+  const [progress, setProgress] = useState<SaveProgress | null>(null);
   const [dlResult, setDlResult] = useState<DlResult | null>(null);
   const [saveError, setSaveError] = useState('');
 
@@ -328,7 +329,7 @@ export default function GalleryPage() {
     let zipFailed = 0;
 
     if (useZip) {
-      setProgress({ current: 0, total: photoTargets.length, phase: 'fetching' });
+      setProgress({ current: 0, total: photoTargets.length, phase: 'preparing' });
       const urls = await fetchDownloadUrls(photoTargets);
       const zipTargets: ZipTarget[] = [];
       photoTargets.forEach((post, i) => {
@@ -338,7 +339,7 @@ export default function GalleryPage() {
       zipFailed = photoTargets.length - zipTargets.length;
       if (zipTargets.length > 0) {
         const result = await downloadAsZip(zipTargets, 'photo-download.zip', (p) => {
-          setProgress({ current: p.current, total: p.total, phase: p.phase });
+          setProgress({ current: p.current, total: p.total, phase: p.phase, percent: p.percent });
         });
         zipSucceeded = result.succeeded;
         zipFailed += result.failed;
@@ -351,7 +352,7 @@ export default function GalleryPage() {
     }
 
     if (individualTargets.length > 0) {
-      setProgress({ current: 0, total: individualTargets.length });
+      setProgress({ current: 0, total: individualTargets.length, phase: 'preparing' });
       const urls = await fetchDownloadUrls(individualTargets);
       const newSaved = new Set(savedRef.current);
       let done = 0;
@@ -362,7 +363,17 @@ export default function GalleryPage() {
         if (!url) {
           failCount++;
           done++;
-          setProgress({ current: done, total: individualTargets.length });
+          setProgress({ current: done, total: individualTargets.length, phase: 'fetching' });
+          continue;
+        }
+        // Video must never be fetched into a Blob: R2 presigned URLs aren't
+        // CORS-enabled for that, and large files would be slow/memory-heavy.
+        // Open it directly and let the browser/OS handle the save.
+        if (post.file_type !== 'image') {
+          openVideoUrl(resolvePublicMediaUrl(url));
+          newSaved.add(post.id);
+          done++;
+          setProgress({ current: done, total: individualTargets.length, phase: 'fetching' });
           continue;
         }
         try {
@@ -382,7 +393,7 @@ export default function GalleryPage() {
           failCount++;
         }
         done++;
-        setProgress({ current: done, total: individualTargets.length });
+        setProgress({ current: done, total: individualTargets.length, phase: 'fetching' });
       }
 
       setSaved(newSaved);
@@ -628,11 +639,12 @@ export default function GalleryPage() {
 
         {/* Progress */}
         {progress && (
-          <div style={{ marginBottom: 12, padding: '10px 14px', background: '#fff3cd', borderRadius: 6, fontSize: 13 }}>
-            {progress.phase === 'fetching' ? `写真を取得中... ${progress.current} / ${progress.total}`
-              : progress.phase === 'zipping' ? 'ZIPを作成中...'
-              : progress.phase === 'done' ? '完了しました'
-              : `保存中... ${progress.current} / ${progress.total}`}
+          <div style={{
+            marginBottom: 12, padding: '10px 14px', borderRadius: 6, fontSize: 13,
+            background: progress.phase === 'error' ? '#f8d7da' : '#fff3cd',
+            color: progress.phase === 'error' ? '#721c24' : undefined,
+          }}>
+            {formatSaveProgress(progress)}
           </div>
         )}
 
