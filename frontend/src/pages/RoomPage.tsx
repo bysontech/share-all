@@ -755,7 +755,7 @@ export default function RoomPage() {
           <>
             <div style={{ ...cardStyle, textAlign: 'left' }}>
               <p style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 'bold', color: contentColor }}>
-                写真、動画の共有機能は現在ベータ版です。
+                写真、動画の共有機能は現在開発中です。
               </p>
               <p style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.7, color: textColor }}>
                 投稿や保存が使いづらいと感じた場合は教えてください！
@@ -822,7 +822,7 @@ export default function RoomPage() {
             </div>
             <UploadCard
               title="写真"
-              desc="思い出の写真を共有してください。"
+              desc="思い出の写真を共有してください。<br />１度に最大100枚まで投稿できます。"
               accept={IMAGE_ACCEPT}
               summary={albumQueue.summary}
               addFiles={albumQueue.addFiles}
@@ -837,7 +837,7 @@ export default function RoomPage() {
             />
             <UploadCard
               title="動画"
-              desc="思い出の動画を共有してください（MP4・MOV）。"
+              desc="思い出の動画を共有してください（MP4・MOV）。<br />最大900MBまで投稿できます。"
               accept={VIDEO_ACCEPT}
               summary={videoQueue.summary}
               addFiles={videoQueue.addFiles}

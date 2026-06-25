@@ -607,7 +607,7 @@ export default function PhotosPage() {
         {isMobile && posts.length > 0 && !progress && (
           <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 16px 12px' }}>
             <span style={{ fontSize: 12, color: '#666', lineHeight: 1.6 }}>
-              写真を開いて長押しし、「写真に保存」からも保存できます。
+              写真を長押し→「写真に保存」からも保存できます。<br />PC版では複数枚を選択して保存できます。
             </span>
           </div>
         )}
