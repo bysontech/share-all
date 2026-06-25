@@ -47,7 +47,7 @@ function injectKeyframes() {
 
 interface UploadCardProps {
   title: string;
-  desc: string;
+  desc: React.ReactNode;
   accept: string;
   summary: { total: number; pending: number; active: number; done: number; error: number; uploadedBytes: number; totalBytes: number };
   addFiles: (files: File[]) => void;
@@ -822,7 +822,7 @@ export default function RoomPage() {
             </div>
             <UploadCard
               title="写真"
-              desc="思い出の写真を共有してください。<br />１度に最大100枚まで投稿できます。"
+              desc={<>思い出の写真を共有してください。<br />１度に最大100枚まで投稿できます。</>}
               accept={IMAGE_ACCEPT}
               summary={albumQueue.summary}
               addFiles={albumQueue.addFiles}
@@ -837,7 +837,7 @@ export default function RoomPage() {
             />
             <UploadCard
               title="動画"
-              desc="思い出の動画を共有してください（MP4・MOV）。<br />最大900MBまで投稿できます。"
+              desc={<>思い出の動画を共有してください（MP4・MOV）。<br />最大900MBまで投稿できます。</>}
               accept={VIDEO_ACCEPT}
               summary={videoQueue.summary}
               addFiles={videoQueue.addFiles}
