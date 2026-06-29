@@ -348,6 +348,48 @@ export const api = {
     }),
 };
 
+// ── Multipart Upload API (large video) ──
+
+export interface MultipartStartResponse {
+  uploadId: string;
+  fileKey: string;
+  postId: string;
+}
+
+export interface MultipartPartUrlResponse {
+  uploadUrl: string;
+  partNumber: number;
+}
+
+export const multipartApi = {
+  start: (roomId: string, body: { nickname: string; fileName: string; mimeType: string; fileSize: number }) =>
+    request<MultipartStartResponse>(`/rooms/${roomId}/posts/multipart/start`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  partUrl: (roomId: string, body: { postId: string; fileKey: string; uploadId: string; partNumber: number }) =>
+    request<MultipartPartUrlResponse>(`/rooms/${roomId}/posts/multipart/part-url`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  complete: (
+    roomId: string,
+    body: { postId: string; fileKey: string; uploadId: string; parts: { partNumber: number; etag: string }[] }
+  ) =>
+    request<{ ok: boolean }>(`/rooms/${roomId}/posts/multipart/complete`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  abort: (roomId: string, body: { postId: string; fileKey: string; uploadId: string }) =>
+    request<{ ok: boolean }>(`/rooms/${roomId}/posts/multipart/abort`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+};
+
 // ── Admin API (credentials: 'include') ──
 
 async function adminRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -429,6 +471,48 @@ export function putToR2(
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else reject(new Error(`R2 PUT failed: ${xhr.status}`));
+    });
+    xhr.addEventListener('error', () => reject(new Error('ネットワークエラーが発生しました')));
+    xhr.addEventListener('abort', () => reject(new Error('アップロードが中断されました')));
+
+    xhr.send(data);
+  });
+}
+
+/**
+ * PUTs a single multipart-upload part directly to its presigned R2 URL and resolves
+ * with the response's ETag (required by the Complete Multipart Upload call). Requires
+ * the R2 bucket CORS policy to include ETag in ExposeHeaders, otherwise the browser
+ * cannot read it and this rejects.
+ */
+export function putPartToR2(
+  uploadUrl: string,
+  data: Blob,
+  onProgress?: (loaded: number, total: number) => void,
+  onXhrReady?: (xhr: XMLHttpRequest) => void
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', resolvePublicMediaUrl(uploadUrl));
+    onXhrReady?.(xhr);
+
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) onProgress(e.loaded, e.total);
+      });
+    }
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const etag = xhr.getResponseHeader('ETag');
+        if (!etag) {
+          reject(new Error('ETagを取得できませんでした（R2バケットのCORS設定を確認してください）'));
+          return;
+        }
+        resolve(etag);
+      } else {
+        reject(new Error(`R2 PUT failed: ${xhr.status}`));
+      }
     });
     xhr.addEventListener('error', () => reject(new Error('ネットワークエラーが発生しました')));
     xhr.addEventListener('abort', () => reject(new Error('アップロードが中断されました')));

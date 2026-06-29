@@ -26,6 +26,8 @@ IMAGE_TRANSFORMATIONS_ORIGIN = "https://share-photo-api.bysontech.jp"
 PUBLIC_WEDDING_ROOM_ID = "5f75d656-f453-4125-bacc-c434c20f779f"
 #本番用bk
 PUBLIC_WEDDING_ROOM_ID_PRODUCTION = "40f7fc7f-b833-49b8-a667-f6a2003f5896"
+# 大容量動画（Multipart Upload）の最大サイズ。MB単位
+MAX_LARGE_VIDEO_SIZE_MB = "5000"
 
 [dev]
 port = 8787

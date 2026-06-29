@@ -33,6 +33,8 @@ export interface Env {
   PUBLIC_WEDDING_ENTRY_TOKEN_HASH?: string;
   /** SHA-256 hex of the slideshow token for /wedding/live/:token. Set via wrangler secret. */
   PUBLIC_WEDDING_LIVE_TOKEN_HASH?: string;
+  /** Max size in MB for the large-video Multipart Upload lane. Default: 5000 (5GB). */
+  MAX_LARGE_VIDEO_SIZE_MB?: string;
 }
 
 export interface Room {
