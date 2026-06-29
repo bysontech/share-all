@@ -57,6 +57,16 @@ function splitParts(fileSize: number): MultipartPart[] {
   return parts;
 }
 
+/** partNumbers that are not yet a verified, successful upload (wrong status or missing ETag). */
+function findMissingPartNumbers(parts: MultipartPart[]): number[] {
+  return parts.filter((p) => p.status !== 'done' || !p.etag).map((p) => p.partNumber);
+}
+
+/** True only when every part has finished uploading (status 'done') and has a stored ETag. */
+function allPartsUploaded(parts: MultipartPart[]): boolean {
+  return findMissingPartNumbers(parts).length === 0;
+}
+
 interface UseMultipartUploadOptions {
   roomId: string;
   nickname: string;
@@ -184,6 +194,16 @@ export function useMultipartUpload({ roomId, nickname, participantId, onPostComp
 
       if (cancelledRef.current.has(id)) throw new CancelledError();
       if (firstError) throw firstError;
+
+      // Defensive backstop: Promise.all only resolves once every worker's while-loop has
+      // returned, and a worker only returns once cursor has consumed all pendingPartNumbers
+      // (cancel/error are the only other exits, both handled above) — so this should never
+      // actually find a gap. Re-verify by status+ETag anyway rather than trust that invariant.
+      const latest = itemsRef.current.get(id);
+      const stillMissing = latest ? findMissingPartNumbers(latest.parts) : pendingPartNumbers;
+      if (stillMissing.length > 0) {
+        throw new Error(`アップロードが未完了のパートがあります: ${stillMissing.join(', ')}`);
+      }
     },
     [uploadOnePart]
   );
@@ -219,21 +239,23 @@ export function useMultipartUpload({ roomId, nickname, participantId, onPostComp
 
         if (cancelledRef.current.has(id)) throw new CancelledError();
 
+        // Never advance to 'completing' (and never call multipart/complete) while any part
+        // is still missing, failed, retrying, or uploading — only a verified all-done state
+        // may proceed, so the progress UI can't show e.g. "7/9" and then jump to completed.
+        const latest = itemsRef.current.get(id)!;
+        if (!allPartsUploaded(latest.parts)) {
+          const missing = findMissingPartNumbers(latest.parts);
+          console.error('[multipart] complete blocked: parts incomplete', { id, missing });
+          throw new Error(
+            missing.length === 1 ? `パート${missing[0]}が未完了です` : `未完了のパートがあります: ${missing.join(', ')}`
+          );
+        }
+
         updateItem(id, { status: 'completing' });
 
-        // Build parts strictly from a partNumber-keyed map, iterated in ascending order,
-        // so Complete never sees parts ordered by upload-completion timing.
-        const latest = itemsRef.current.get(id)!;
-        const etagByPartNumber = new Map<number, string>();
-        for (const p of latest.parts) {
-          if (p.etag) etagByPartNumber.set(p.partNumber, p.etag);
-        }
-        const parts: { partNumber: number; etag: string }[] = [];
-        for (let partNumber = 1; partNumber <= latest.parts.length; partNumber++) {
-          const etag = etagByPartNumber.get(partNumber);
-          if (!etag) throw new Error(`パート${partNumber}のETagが見つかりません`);
-          parts.push({ partNumber, etag });
-        }
+        const parts = [...latest.parts]
+          .sort((a, b) => a.partNumber - b.partNumber)
+          .map((p) => ({ partNumber: p.partNumber, etag: p.etag! }));
         await multipartApi.complete(roomId, { postId, fileKey, uploadId, parts });
 
         // Video thumbnail: best-effort, same flow as normal video upload — failure does not block.
