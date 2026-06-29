@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import type { Env } from './types';
 import rooms from './routes/rooms';
 import posts from './routes/posts';
+import multipart from './routes/multipart';
 import theme from './routes/theme';
 import admin from './routes/admin';
 import internal from './routes/internal';
@@ -24,6 +25,10 @@ app.use('*', cors({
 }));
 
 app.route('/api/rooms', rooms);
+// Must be registered before the posts router: Hono resolves overlapping static vs
+// dynamic segments by registration order, and posts has a /:postId/complete route
+// that would otherwise swallow /multipart/complete.
+app.route('/api/rooms/:roomId/posts/multipart', multipart);
 app.route('/api/rooms/:roomId/posts', posts);
 app.route('/api/rooms/:roomId/theme', theme);
 app.route('/api/admin', admin);

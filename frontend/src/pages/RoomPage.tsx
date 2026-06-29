@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, ApiError, resolvePublicMediaUrl, type RoomInfo, type BootstrapTheme, type EventMode } from '../api/client';
 import { useUploadQueue } from '../hooks/useUploadQueue';
+import { useMultipartUpload, type MultipartItem, type MultipartItemStatus } from '../hooks/useMultipartUpload';
 import { getOrCreateParticipantId } from '../utils/participantId';
 
 const SLIDESHOW_MAX = 10;
@@ -238,6 +239,163 @@ function UploadCard({
   );
 }
 
+// ---- Large-video multipart upload card ----
+
+function formatGB(bytes: number) {
+  return (bytes / 1024 / 1024 / 1024).toFixed(2);
+}
+
+const MULTIPART_STATUS_LABEL: Record<MultipartItemStatus, string> = {
+  pending: '待機中',
+  uploading: 'アップロード中',
+  completing: '完了処理中',
+  done: '完了',
+  error: '失敗',
+  cancelled: 'キャンセル済み',
+};
+
+interface MultipartVideoCardProps {
+  items: MultipartItem[];
+  addFiles: (files: File[]) => void;
+  cancelItem: (id: string) => void;
+  clearDone: () => void;
+  hasBg: boolean;
+  primaryBtnStyle: React.CSSProperties;
+  cardStyle: React.CSSProperties;
+  textColor: string;
+  accentColor: string;
+  accept: string;
+}
+
+function MultipartVideoCard({
+  items, addFiles, cancelItem, clearDone,
+  hasBg, primaryBtnStyle, cardStyle, textColor, accentColor, accept,
+}: MultipartVideoCardProps) {
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(e.target.files ?? []).filter((f) =>
+      accept.split(',').some((a) => f.type === a.trim())
+    );
+    if (selected.length) addFiles(selected);
+    e.target.value = '';
+  }
+
+  const doneCount = items.filter((it) => it.status === 'done').length;
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 'bold' }}>大容量動画をアップロード</h3>
+      <p style={{ margin: '0 0 12px', fontSize: 12, color: textColor, lineHeight: 1.5 }}>
+        高画質・長時間の動画はこちら。900MB以下の動画でも利用できます。
+      </p>
+
+      <label style={{ ...primaryBtnStyle, display: 'inline-block', marginBottom: 12, cursor: 'pointer' }}>
+        ファイルを選択
+        <input type="file" accept={accept} multiple onChange={handleFileChange} style={{ display: 'none' }} />
+      </label>
+
+      {items.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {items.map((item) => {
+            const percent = item.totalBytes > 0
+              ? Math.min(100, Math.round((item.uploadedBytes / item.totalBytes) * 100))
+              : 0;
+            const doneParts = item.parts.filter((p) => p.status === 'done').length;
+            const retryingPart = item.parts.find((p) => p.status === 'retrying');
+            const canCancel = item.status === 'pending' || item.status === 'uploading';
+
+            return (
+              <div
+                key={item.id}
+                style={{
+                  background: hasBg ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.55)',
+                  border: hasBg ? '1px solid rgba(255,255,255,0.18)' : '1px solid rgba(0,0,0,0.08)',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  fontSize: 12,
+                  color: textColor,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {item.file.name}
+                  </span>
+                  <span style={{ color: item.status === 'error' ? '#f88' : item.status === 'done' ? accentColor : textColor, flexShrink: 0 }}>
+                    {MULTIPART_STATUS_LABEL[item.status]}
+                  </span>
+                </div>
+
+                {(item.status === 'uploading' || item.status === 'completing') && (
+                  <>
+                    <div style={{ height: 3, background: 'rgba(128,128,128,0.3)', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${percent}%`,
+                        background: accentColor,
+                        transition: 'width 0.3s ease',
+                        borderRadius: 2,
+                      }} />
+                    </div>
+                    <div style={{ fontSize: 11, opacity: 0.85 }}>
+                      {percent}%（{formatGB(item.uploadedBytes)} / {formatGB(item.totalBytes)} GB）・パート {doneParts}/{item.parts.length}
+                      {retryingPart && <> ・パート{retryingPart.partNumber}を再試行中（{retryingPart.retryCount}回目）</>}
+                    </div>
+                  </>
+                )}
+
+                {item.status === 'error' && item.error && (
+                  <div style={{ fontSize: 11, color: '#f88', marginTop: 2 }}>{item.error}</div>
+                )}
+
+                {canCancel && (
+                  <div style={{ marginTop: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => cancelItem(item.id)}
+                      style={{
+                        fontSize: 11,
+                        cursor: 'pointer',
+                        padding: '4px 8px',
+                        borderRadius: 3,
+                        minHeight: 26,
+                        border: hasBg ? '1px solid rgba(255,255,255,0.24)' : '1px solid #d8cdb8',
+                        background: hasBg ? 'rgba(255,255,255,0.14)' : '#f3eadb',
+                        color: hasBg ? '#fff' : '#6a5530',
+                      }}
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {doneCount > 0 && (
+        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <p style={{ margin: 0, fontSize: 12, color: textColor, opacity: 0.85 }}>動画が共有されました。</p>
+          <button
+            type="button"
+            onClick={clearDone}
+            style={{
+              fontSize: 11,
+              cursor: 'pointer',
+              padding: '4px 8px',
+              borderRadius: 3,
+              border: hasBg ? '1px solid rgba(255,255,255,0.24)' : '1px solid #d8cdb8',
+              background: hasBg ? 'rgba(255,255,255,0.14)' : '#f3eadb',
+              color: hasBg ? '#fff' : '#6a5530',
+            }}
+          >
+            完了済みを消す
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- Shared background layers ----
 
 function BgLayers({
@@ -374,6 +532,12 @@ export default function RoomPage() {
     nickname,
     participantId,
     postPurpose: 'video',
+  });
+
+  const largeVideoUpload = useMultipartUpload({
+    roomId: roomId ?? '',
+    nickname,
+    participantId,
   });
 
   useEffect(() => {
@@ -850,6 +1014,18 @@ export default function RoomPage() {
               doneHint="動画が共有されました。"
               isVideoCard
               maxBytesPerSelection={VIDEO_SELECTION_MAX_BYTES}
+            />
+            <MultipartVideoCard
+              items={largeVideoUpload.items}
+              addFiles={largeVideoUpload.addFiles}
+              cancelItem={largeVideoUpload.cancelItem}
+              clearDone={largeVideoUpload.clearDone}
+              hasBg={hasBg}
+              primaryBtnStyle={primaryBtnStyle}
+              cardStyle={cardStyle}
+              textColor={textColor}
+              accentColor={accentColor}
+              accept={VIDEO_ACCEPT}
             />
             <div style={{ ...cardStyle, textAlign: 'center', marginBottom: 0 }}>
               <p style={{ margin: '0 0 14px', fontSize: 13, color: textColor }}>

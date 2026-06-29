@@ -159,3 +159,95 @@ export async function generatePresignedGetUrl(
   const url = await create.call(b, 'GET', fileKey, { expiresIn: expirySeconds });
   return url;
 }
+
+// ── Multipart Upload (large video) ──
+// Create/Complete/Abort are server-to-server calls the Worker makes directly against
+// R2's S3-compatible API. UploadPart is never called by the Worker — only a presigned
+// PUT URL is handed back so the browser can PUT each part straight to R2, keeping the
+// video body out of the Worker entirely. Only the S3-credential path supports this
+// (the R2-binding presign fallback used for local dev has no multipart equivalent).
+export function envSupportsMultipart(env: Env): boolean {
+  return hasS3PresignConfig(env);
+}
+
+function s3Client(config: R2PresignConfig): AwsClient {
+  return new AwsClient({
+    accessKeyId: config.R2_ACCESS_KEY_ID!.trim(),
+    secretAccessKey: config.R2_SECRET_ACCESS_KEY!.trim(),
+    service: 's3',
+    region: 'auto',
+  });
+}
+
+function r2ObjectUrl(config: R2PresignConfig, fileKey: string): string {
+  const accountId = config.R2_ACCOUNT_ID!.trim();
+  const bucketName = config.R2_BUCKET_NAME!.trim();
+  return `https://${accountId}.r2.cloudflarestorage.com/${bucketName}/${encodeObjectKey(fileKey)}`;
+}
+
+export async function createMultipartUpload(
+  config: R2PresignConfig,
+  fileKey: string,
+  mimeType: string
+): Promise<string> {
+  if (!hasS3PresignConfig(config)) throw new TypeError('R2 S3 presign config is incomplete');
+  const res = await s3Client(config).fetch(`${r2ObjectUrl(config, fileKey)}?uploads`, {
+    method: 'POST',
+    headers: { 'Content-Type': mimeType },
+  });
+  if (!res.ok) {
+    throw new Error(`R2 CreateMultipartUpload failed: ${res.status} ${await res.text().catch(() => '')}`);
+  }
+  const xml = await res.text();
+  const match = xml.match(/<UploadId>([^<]+)<\/UploadId>/);
+  if (!match) throw new Error('R2 CreateMultipartUpload response missing UploadId');
+  return match[1];
+}
+
+export async function generatePresignedUploadPartUrl(
+  config: R2PresignConfig,
+  fileKey: string,
+  uploadId: string,
+  partNumber: number,
+  expirySeconds: number
+): Promise<string> {
+  if (!hasS3PresignConfig(config)) throw new TypeError('R2 S3 presign config is incomplete');
+  const url = `${r2ObjectUrl(config, fileKey)}?partNumber=${partNumber}&uploadId=${encodeURIComponent(uploadId)}&X-Amz-Expires=${expirySeconds}`;
+  const signed = await s3Client(config).sign(new Request(url, { method: 'PUT' }), { aws: { signQuery: true } });
+  return signed.url.toString();
+}
+
+export async function completeMultipartUpload(
+  config: R2PresignConfig,
+  fileKey: string,
+  uploadId: string,
+  parts: { partNumber: number; etag: string }[]
+): Promise<void> {
+  if (!hasS3PresignConfig(config)) throw new TypeError('R2 S3 presign config is incomplete');
+  const sortedParts = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+  const body = `<CompleteMultipartUpload>${sortedParts
+    .map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`)
+    .join('')}</CompleteMultipartUpload>`;
+  const res = await s3Client(config).fetch(`${r2ObjectUrl(config, fileKey)}?uploadId=${encodeURIComponent(uploadId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/xml' },
+    body,
+  });
+  if (!res.ok) {
+    throw new Error(`R2 CompleteMultipartUpload failed: ${res.status} ${await res.text().catch(() => '')}`);
+  }
+}
+
+export async function abortMultipartUpload(
+  config: R2PresignConfig,
+  fileKey: string,
+  uploadId: string
+): Promise<void> {
+  if (!hasS3PresignConfig(config)) throw new TypeError('R2 S3 presign config is incomplete');
+  const res = await s3Client(config).fetch(`${r2ObjectUrl(config, fileKey)}?uploadId=${encodeURIComponent(uploadId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`R2 AbortMultipartUpload failed: ${res.status} ${await res.text().catch(() => '')}`);
+  }
+}
