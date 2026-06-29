@@ -155,13 +155,28 @@ multipart.post('/complete', async (c) => {
     return err('postId, fileKey, uploadId, parts are required');
   }
 
+  // Defensive check: never forward a part list that's missing, duplicated, or
+  // out of sequence to R2 — surface the problem here with a clear error instead.
+  const sortedParts = [...body.parts].sort((a, b) => a.partNumber - b.partNumber);
+  const seenPartNumbers = new Set<number>();
+  for (const p of sortedParts) {
+    if (seenPartNumbers.has(p.partNumber)) return err(`Duplicate partNumber: ${p.partNumber}`);
+    seenPartNumbers.add(p.partNumber);
+    if (!p.etag || !p.etag.trim()) return err(`Missing ETag for partNumber ${p.partNumber}`);
+  }
+  for (let i = 0; i < sortedParts.length; i++) {
+    if (sortedParts[i].partNumber !== i + 1) {
+      return err(`Part sequence is not contiguous (expected partNumber ${i + 1}, got ${sortedParts[i].partNumber})`);
+    }
+  }
+
   const post = await getPost(c.env.DB, body.postId);
   if (!post || post.room_id !== roomId) return err('Post not found', 404);
   if (post.file_key !== body.fileKey) return err('fileKey does not match post', 403);
   if (post.upload_status !== 'pending') return err('Post is not pending', 409);
 
   try {
-    await completeMultipartUpload(c.env, body.fileKey, body.uploadId, body.parts);
+    await completeMultipartUpload(c.env, body.fileKey, body.uploadId, sortedParts);
   } catch (e) {
     console.error('Failed to complete R2 multipart upload', { roomId, postId: body.postId, error: e });
     return err('Failed to complete multipart upload', 500);

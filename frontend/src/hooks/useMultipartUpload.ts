@@ -221,8 +221,19 @@ export function useMultipartUpload({ roomId, nickname, participantId, onPostComp
 
         updateItem(id, { status: 'completing' });
 
+        // Build parts strictly from a partNumber-keyed map, iterated in ascending order,
+        // so Complete never sees parts ordered by upload-completion timing.
         const latest = itemsRef.current.get(id)!;
-        const parts = latest.parts.filter((p) => p.etag).map((p) => ({ partNumber: p.partNumber, etag: p.etag! }));
+        const etagByPartNumber = new Map<number, string>();
+        for (const p of latest.parts) {
+          if (p.etag) etagByPartNumber.set(p.partNumber, p.etag);
+        }
+        const parts: { partNumber: number; etag: string }[] = [];
+        for (let partNumber = 1; partNumber <= latest.parts.length; partNumber++) {
+          const etag = etagByPartNumber.get(partNumber);
+          if (!etag) throw new Error(`パート${partNumber}のETagが見つかりません`);
+          parts.push({ partNumber, etag });
+        }
         await multipartApi.complete(roomId, { postId, fileKey, uploadId, parts });
 
         // Video thumbnail: best-effort, same flow as normal video upload — failure does not block.

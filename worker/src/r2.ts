@@ -217,6 +217,25 @@ export async function generatePresignedUploadPartUrl(
   return signed.url.toString();
 }
 
+function escapeXml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Defensive backstop: parts must be a contiguous 1..N sequence, each with a non-empty ETag. */
+function assertContiguousParts(parts: { partNumber: number; etag: string }[]): void {
+  for (let i = 0; i < parts.length; i++) {
+    const expected = i + 1;
+    if (parts[i].partNumber !== expected) {
+      throw new Error(
+        `R2 CompleteMultipartUpload: part sequence is not contiguous (expected partNumber ${expected}, got ${parts[i].partNumber})`
+      );
+    }
+    if (!parts[i].etag || !parts[i].etag.trim()) {
+      throw new Error(`R2 CompleteMultipartUpload: part ${expected} is missing an ETag`);
+    }
+  }
+}
+
 export async function completeMultipartUpload(
   config: R2PresignConfig,
   fileKey: string,
@@ -225,8 +244,9 @@ export async function completeMultipartUpload(
 ): Promise<void> {
   if (!hasS3PresignConfig(config)) throw new TypeError('R2 S3 presign config is incomplete');
   const sortedParts = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+  assertContiguousParts(sortedParts);
   const body = `<CompleteMultipartUpload>${sortedParts
-    .map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`)
+    .map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${escapeXml(p.etag)}</ETag></Part>`)
     .join('')}</CompleteMultipartUpload>`;
   const res = await s3Client(config).fetch(`${r2ObjectUrl(config, fileKey)}?uploadId=${encodeURIComponent(uploadId)}`, {
     method: 'POST',
