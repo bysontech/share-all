@@ -2,24 +2,13 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api, resolvePublicMediaUrl, type Post } from '../api/client';
 import { isMobileDevice } from '../utils/device';
+import { openVideoUrl } from '../utils/videoDownload';
 
 type VideoSaveProgress = {
   phase: 'fetching' | 'done' | 'error';
   current: number;
   total: number;
 };
-
-function mimeToExt(mime: string): string {
-  const map: Record<string, string> = {
-    'video/mp4': 'mp4',
-    'video/quicktime': 'mov',
-  };
-  return map[mime.toLowerCase()] ?? 'mp4';
-}
-
-function buildDownloadFilename(post: Post): string {
-  return `video_${post.id.slice(0, 8)}.${mimeToExt(post.mime_type)}`;
-}
 
 function formatVideoSaveProgress(progress: VideoSaveProgress): string {
   if (progress.phase === 'fetching') return `動画を取得中 ${progress.current} / ${progress.total}`;
@@ -134,23 +123,17 @@ export default function VideosPage() {
       if (!url) throw new Error('video url not found');
       setVideoUrls(prev => ({ ...prev, [post.id]: url }));
 
-      const resp = await fetch(resolvePublicMediaUrl(url));
-      if (!resp.ok) throw new Error('fetch failed');
-      const blob = await resp.blob();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = buildDownloadFilename(post);
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
+      // Video must never be fetched into a Blob: R2 presigned URLs aren't
+      // CORS-enabled for that, and large files would be slow/memory-heavy.
+      // Open it directly and let the browser/OS handle the save.
+      openVideoUrl(resolvePublicMediaUrl(url));
 
       setSaveProgress({ phase: 'done', current: 1, total: 1 });
       setSaveStatus('保存を開始しました。ブラウザのダウンロード状況をご確認ください。');
       setTimeout(() => setSaveProgress(null), 1200);
     } catch {
       setSaveProgress({ phase: 'error', current: 0, total: 1 });
-      setSaveStatus('保存に失敗しました。もう一度お試しください。');
+      setSaveStatus('保存用URLを開けませんでした。もう一度お試しください。');
       setTimeout(() => setSaveProgress(null), 3000);
     }
   }
