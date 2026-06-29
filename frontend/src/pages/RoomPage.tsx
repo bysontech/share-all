@@ -283,7 +283,7 @@ function MultipartVideoCard({
 
   return (
     <div style={cardStyle}>
-      <h3 style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 'bold' }}>大容量動画をアップロード</h3>
+      <h3 style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 'bold' }}>動画（高画質・長時間）</h3>
       <p style={{ margin: '0 0 12px', fontSize: 12, color: textColor, lineHeight: 1.5 }}>
         高画質・長時間の動画はこちら。900MB以下の動画でも利用できます。
       </p>
