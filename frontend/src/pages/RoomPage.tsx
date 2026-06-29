@@ -285,7 +285,7 @@ function MultipartVideoCard({
     <div style={cardStyle}>
       <h3 style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 'bold' }}>動画（高画質・長時間）</h3>
       <p style={{ margin: '0 0 12px', fontSize: 12, color: textColor, lineHeight: 1.5 }}>
-        高画質・長時間の動画はこちら。900MB以下の動画でも利用できます。
+        高画質・長時間の動画はこちら。
       </p>
 
       <label style={{ ...primaryBtnStyle, display: 'inline-block', marginBottom: 12, cursor: 'pointer' }}>
