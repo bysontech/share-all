@@ -504,7 +504,7 @@ export function putPartToR2(
 
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        const etag = xhr.getResponseHeader('ETag');
+        const etag = xhr.getResponseHeader('ETag')?.trim();
         if (!etag) {
           reject(new Error('ETagを取得できませんでした（R2バケットのCORS設定を確認してください）'));
           return;
