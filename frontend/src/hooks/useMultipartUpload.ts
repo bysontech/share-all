@@ -57,14 +57,24 @@ function splitParts(fileSize: number): MultipartPart[] {
   return parts;
 }
 
-/** partNumbers that are not yet a verified, successful upload (wrong status or missing ETag). */
-function findMissingPartNumbers(parts: MultipartPart[]): number[] {
-  return parts.filter((p) => p.status !== 'done' || !p.etag).map((p) => p.partNumber);
+export interface CompletedPart {
+  partNumber: number;
+  etag: string;
 }
 
-/** True only when every part has finished uploading (status 'done') and has a stored ETag. */
-function allPartsUploaded(parts: MultipartPart[]): boolean {
-  return findMissingPartNumbers(parts).length === 0;
+/**
+ * partNumbers in 1..totalParts missing from a completed-parts map. This is the only
+ * completion check in the hook — it reads a local Map, never React state, since a
+ * fast XHR `load` can resolve before the corresponding setState has propagated back
+ * through itemsRef.
+ */
+function findMissingPartNumbers(completedParts: Map<number, string>, totalParts: number): number[] {
+  const missing: number[] = [];
+  for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+    const etag = completedParts.get(partNumber);
+    if (!etag || !etag.trim()) missing.push(partNumber);
+  }
+  return missing;
 }
 
 interface UseMultipartUploadOptions {
@@ -120,10 +130,10 @@ export function useMultipartUpload({ roomId, nickname, participantId, onPostComp
   }, []);
 
   const uploadOnePart = useCallback(
-    async (id: string, postId: string, fileKey: string, uploadId: string, partNumber: number) => {
+    async (id: string, postId: string, fileKey: string, uploadId: string, partNumber: number): Promise<string> => {
       const item = itemsRef.current.get(id);
       const part = item?.parts.find((p) => p.partNumber === partNumber);
-      if (!item || !part) return;
+      if (!item || !part) throw new Error(`パート${partNumber}の情報が見つかりません`);
       const blob = item.file.slice(part.start, part.end);
       const maxAttempts = MAX_PART_RETRIES + 1;
       let lastError: Error = new Error('Part upload failed');
@@ -151,8 +161,10 @@ export function useMultipartUpload({ roomId, nickname, participantId, onPostComp
             }
           );
 
+          // This setState is for UI display only. The returned etag (not this state
+          // update) is what the caller treats as the completion source of truth.
           updatePart(id, partNumber, { status: 'done', uploadedBytes: part.size, etag });
-          return;
+          return etag;
         } catch (e) {
           if (e instanceof CancelledError) throw e;
           lastError = e instanceof Error ? e : new Error('Part upload failed');
@@ -168,10 +180,15 @@ export function useMultipartUpload({ roomId, nickname, participantId, onPostComp
   );
 
   const uploadAllParts = useCallback(
-    async (id: string, postId: string, fileKey: string, uploadId: string) => {
+    async (id: string, postId: string, fileKey: string, uploadId: string): Promise<Map<number, string>> => {
       const item = itemsRef.current.get(id);
-      if (!item) return;
-      const pendingPartNumbers = item.parts.filter((p) => p.status !== 'done').map((p) => p.partNumber);
+      if (!item) return new Map();
+      const totalParts = item.parts.length;
+      // Completion source of truth: a plain local Map written synchronously the moment
+      // each part's upload promise resolves. React state (parts/itemsRef) is UI display
+      // only — a fast XHR `load` can resolve before the corresponding setState has
+      // propagated back through itemsRef, so completion must never be read back from state.
+      const completedParts = new Map<number, string>();
       let cursor = 0;
       let firstError: Error | null = null;
 
@@ -179,9 +196,11 @@ export function useMultipartUpload({ roomId, nickname, participantId, onPostComp
         while (true) {
           if (cancelledRef.current.has(id) || firstError) return;
           const idx = cursor++;
-          if (idx >= pendingPartNumbers.length) return;
+          if (idx >= totalParts) return;
+          const partNumber = idx + 1;
           try {
-            await uploadOnePart(id, postId, fileKey, uploadId, pendingPartNumbers[idx]);
+            const etag = await uploadOnePart(id, postId, fileKey, uploadId, partNumber);
+            completedParts.set(partNumber, etag);
           } catch (e) {
             if (e instanceof CancelledError) return;
             if (!firstError) firstError = e instanceof Error ? e : new Error('Part upload failed');
@@ -189,21 +208,19 @@ export function useMultipartUpload({ roomId, nickname, participantId, onPostComp
         }
       }
 
-      const workerCount = Math.min(MAX_PARALLEL_PARTS, pendingPartNumbers.length);
+      const workerCount = Math.min(MAX_PARALLEL_PARTS, totalParts);
       await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
       if (cancelledRef.current.has(id)) throw new CancelledError();
       if (firstError) throw firstError;
 
-      // Defensive backstop: Promise.all only resolves once every worker's while-loop has
-      // returned, and a worker only returns once cursor has consumed all pendingPartNumbers
-      // (cancel/error are the only other exits, both handled above) — so this should never
-      // actually find a gap. Re-verify by status+ETag anyway rather than trust that invariant.
-      const latest = itemsRef.current.get(id);
-      const stillMissing = latest ? findMissingPartNumbers(latest.parts) : pendingPartNumbers;
-      if (stillMissing.length > 0) {
-        throw new Error(`アップロードが未完了のパートがあります: ${stillMissing.join(', ')}`);
+      const missing = findMissingPartNumbers(completedParts, totalParts);
+      if (missing.length > 0) {
+        console.error('[multipart] uploadAllParts: parts missing from local map', { id, missing });
+        throw new Error(`アップロードが未完了のパートがあります: ${missing.join(', ')}`);
       }
+
+      return completedParts;
     },
     [uploadOnePart]
   );
@@ -235,27 +252,27 @@ export function useMultipartUpload({ roomId, nickname, participantId, onPostComp
 
         if (cancelledRef.current.has(id)) throw new CancelledError();
 
-        await uploadAllParts(id, postId, fileKey, uploadId);
+        const completedEtags = await uploadAllParts(id, postId, fileKey, uploadId);
 
         if (cancelledRef.current.has(id)) throw new CancelledError();
 
-        // Never advance to 'completing' (and never call multipart/complete) while any part
-        // is still missing, failed, retrying, or uploading — only a verified all-done state
-        // may proceed, so the progress UI can't show e.g. "7/9" and then jump to completed.
-        const latest = itemsRef.current.get(id)!;
-        if (!allPartsUploaded(latest.parts)) {
-          const missing = findMissingPartNumbers(latest.parts);
-          console.error('[multipart] complete blocked: parts incomplete', { id, missing });
-          throw new Error(
-            missing.length === 1 ? `パート${missing[0]}が未完了です` : `未完了のパートがあります: ${missing.join(', ')}`
-          );
+        // Completion is decided purely from the local completedEtags map returned by
+        // uploadAllParts — never from React state — since concurrent XHR completions can
+        // outrun the setState/re-render that itemsRef mirrors. Never advance to 'completing'
+        // (and never call multipart/complete) while any partNumber is missing from the map.
+        const totalParts = item.parts.length;
+        const parts: CompletedPart[] = [];
+        for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+          const etag = completedEtags.get(partNumber);
+          if (!etag) {
+            console.error('[multipart] complete blocked: part missing from local map', { id, partNumber });
+            throw new Error(`未完了のパートがあります: ${partNumber}`);
+          }
+          parts.push({ partNumber, etag });
         }
 
         updateItem(id, { status: 'completing' });
 
-        const parts = [...latest.parts]
-          .sort((a, b) => a.partNumber - b.partNumber)
-          .map((p) => ({ partNumber: p.partNumber, etag: p.etag! }));
         await multipartApi.complete(roomId, { postId, fileKey, uploadId, parts });
 
         // Video thumbnail: best-effort, same flow as normal video upload — failure does not block.
